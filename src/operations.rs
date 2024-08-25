@@ -4,6 +4,7 @@
 
 use ark_ec::pairing::Pairing;
 use ark_ff::{Field, One, Zero};
+use std::collections::HashSet;
 use thiserror::Error;
 
 /// Subtracts two polynomials.
@@ -49,7 +50,8 @@ pub fn multiply_polynomials<E: Pairing>(
     result
 }
 
-/// Divides two polynomials, using long division, returns the quotient.
+/// Divides two polynomials using long division.
+/// Returns the quotient.
 pub fn divide_polynomials<E: Pairing>(
     num: &[E::ScalarField],
     den: &[E::ScalarField],
@@ -90,7 +92,7 @@ pub fn divide_polynomials<E: Pairing>(
 /// Evaluates a polynomial at a given point.
 pub fn evaluate_polynomial<E: Pairing>(
     p: &[E::ScalarField],
-    point: E::ScalarField,
+    point: &E::ScalarField,
 ) -> E::ScalarField {
     let mut result = E::ScalarField::zero();
     let mut power = E::ScalarField::one();
@@ -117,47 +119,51 @@ pub fn zero_polynomial<E: Pairing>(points: &[E::ScalarField]) -> Vec<E::ScalarFi
     result
 }
 
-/// Implements LaGrange interpolation on the given points and values.
-/// Returns a polynomial that passes through the given set of points.
+/// Performs Lagrange interpolation over a given set of points.
+/// Receives two arrays, one with the points and the other with the evaluations.
+/// Returns the coefficients of the resulting polynomial.
 pub fn lagrange_interpolation<E: Pairing>(
     points: &[E::ScalarField],
     values: &[E::ScalarField],
 ) -> Result<Vec<E::ScalarField>, OperationError> {
-    if points.len() != values.len() {
-        return Err(OperationError::MismatchedPointsAndValues);
+    let points_n = points.len();
+    let mut result = vec![E::ScalarField::zero(); points_n];
+    let mut seen_points = HashSet::with_capacity(points_n);
+
+    // Check for a mismatch between the number of points and values
+    if points_n != values.len() {
+        return Err(OperationError::PointsValuesMismatch);
     }
 
     // Check for repeated points
-    let mut sorted_points = points.to_vec();
-    sorted_points.sort();
-    for i in 1..sorted_points.len() {
-        if sorted_points[i] == sorted_points[i - 1] {
-            return Err(OperationError::IdenticalPoints);
+    for point in points {
+        if !seen_points.insert(point) {
+            return Err(OperationError::RepeatedPoints);
         }
     }
 
-    let mut result = vec![E::ScalarField::zero(); points.len()];
-
-    for j in 0..points.len() {
+    for j in 0..points_n {
         // Initialize the basis polynomial
         let mut basis_poly = vec![E::ScalarField::ONE];
 
-        for k in 0..points.len() {
-            if k != j {
-                // Multiply the basis polynomial by (x - x_k) for all k != j
-                basis_poly =
-                    multiply_polynomials::<E>(&basis_poly, &[-points[k], E::ScalarField::ONE]);
+        for k in 0..points_n {
+            // Continue if we are at the same point (denominator will be zero)
+            if k == j {
+                continue;
+            }
 
-                // Divide each coefficient by (x_j - x_k)
-                for l in 0..basis_poly.len() {
-                    basis_poly[l] /= points[j] - points[k];
-                }
+            // Multiply the basis polynomial by (x - x_k) for all k != j
+            basis_poly = multiply_polynomials::<E>(&basis_poly, &[-points[k], E::ScalarField::ONE]);
+
+            // Divide each coefficient by (x_j - x_k)
+            for coeff in &mut basis_poly {
+                *coeff /= points[j] - points[k];
             }
         }
 
         // Multiply by y_j and add to the result
-        for l in 0..result.len() {
-            result[l] += basis_poly[l] * values[j];
+        for i in 0..points_n {
+            result[i] += basis_poly[i] * values[j];
         }
     }
 
@@ -170,12 +176,12 @@ pub enum OperationError {
     DenominatorTooLarge,
     #[error("Division by zero polynomial is not allowed.")]
     DivisionByZero,
-    #[error("Identical points found in Lagrange interpolation.")]
-    IdenticalPoints,
+    #[error("Lagrange interpolation received repeated points.")]
+    RepeatedPoints,
+    #[error("Different lengths for the points and values arrays.")]
+    PointsValuesMismatch,
     #[error("Insufficient terms in the denominator polynomial.")]
     InsufficientTerms,
-    #[error("Mismatched points and values in Lagrange interpolation.")]
-    MismatchedPointsAndValues,
 }
 
 #[cfg(test)]
@@ -356,7 +362,7 @@ mod tests {
         ];
 
         // Evaluating at x = 0, we should get the constant term
-        let result = evaluate_polynomial::<Bls12_381>(&p, Fr::zero());
+        let result = evaluate_polynomial::<Bls12_381>(&p, &Fr::zero());
         assert!(Fr::eq(&result, &Fr::from(45)));
     }
 
@@ -372,7 +378,7 @@ mod tests {
         ];
 
         // Evaluating at x = 1, we should get the sum of all coefficients
-        let result = evaluate_polynomial::<Bls12_381>(&p, Fr::one());
+        let result = evaluate_polynomial::<Bls12_381>(&p, &Fr::one());
         assert!(Fr::eq(&result, &Fr::from(3325)));
     }
 
@@ -388,7 +394,7 @@ mod tests {
         ];
 
         // Evaluating at x = 22
-        let result = evaluate_polynomial::<Bls12_381>(&p, Fr::from(22));
+        let result = evaluate_polynomial::<Bls12_381>(&p, &Fr::from(22));
         assert!(Fr::eq(&result, &Fr::from(504818755)));
     }
 
@@ -466,11 +472,11 @@ mod tests {
 
     #[test]
     fn test_lagrange_interpolation_identical_points_error() {
-        let points = vec![Fr::from(10), Fr::from(10), Fr::from(10)];
-        let values = vec![Fr::from(100), Fr::from(200), Fr::from(500)];
+        let points = vec![Fr::from(10), Fr::from(10)];
+        let values = vec![Fr::from(100), Fr::from(200)];
 
         let result = lagrange_interpolation::<Bls12_381>(&points, &values);
-        assert!(matches!(result, Err(OperationError::IdenticalPoints)));
+        assert!(matches!(result, Err(OperationError::RepeatedPoints)));
     }
 
     #[test]
@@ -479,9 +485,6 @@ mod tests {
         let values = vec![Fr::from(100), Fr::from(200), Fr::from(500)];
 
         let result = lagrange_interpolation::<Bls12_381>(&points, &values);
-        assert!(matches!(
-            result,
-            Err(OperationError::MismatchedPointsAndValues)
-        ));
+        assert!(matches!(result, Err(OperationError::PointsValuesMismatch)));
     }
 }
