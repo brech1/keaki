@@ -163,6 +163,21 @@ impl<E: Pairing> KZG<E> {
 
         Ok(res)
     }
+
+    /// Returns the generator in G1.
+    pub fn g1_gen(&self) -> E::G1 {
+        self.g1_gen
+    }
+
+    /// Returns the generator in G2.
+    pub fn g2_gen(&self) -> E::G2 {
+        self.g2_gen
+    }
+
+    /// Returns the tau in G2.
+    pub fn tau_g2(&self) -> E::G2 {
+        self.tau_g2
+    }
 }
 
 #[derive(Error, Debug)]
