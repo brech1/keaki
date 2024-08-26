@@ -1,0 +1,11 @@
+[package]
+name = "we-kzg"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+ark-bls12-381 = "0.4.0"
+ark-ec = "0.4.2"
+ark-ff = "0.4.2"
+ark-std = "0.4.0"
+thiserror = "1.0.63"
