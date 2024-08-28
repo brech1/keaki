@@ -5,8 +5,7 @@
 use crate::kzg::KZG;
 use ark_ec::pairing::Pairing;
 use ark_serialize::{CanonicalSerialize, SerializationError};
-use ark_std::rand::{self};
-use ark_std::UniformRand;
+use ark_std::{rand, UniformRand};
 use blake3::OutputReader;
 use rand::thread_rng;
 use std::ops::Mul;
@@ -126,12 +125,12 @@ impl<E: Pairing> KEM<E> {
 
 #[derive(Error, Debug)]
 pub enum KEMError {
-    #[error("Secret serialization failed {0}")]
-    SerializationError(SerializationError),
-    #[error("Points and values sets must have the same length")]
-    EncapsulationInputsLengthError,
     #[error("Proofs and ciphertexts sets must have the same length")]
     DecapsulationInputsLengthError,
+    #[error("Points and values sets must have the same length")]
+    EncapsulationInputsLengthError,
+    #[error("Secret serialization failed {0}")]
+    SerializationError(SerializationError),
 }
 
 #[cfg(test)]
