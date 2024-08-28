@@ -1,17 +1,17 @@
 //! KEM Module
 //!
-//! This module contains the implementation of an Extractable Witness Key Encapsulation Mechanism (KEM).
+//! This module contains the implementation of an Extractable Witness Key encapsulation_single Mechanism (KEM).
 
 use crate::kzg::KZG;
 use ark_ec::pairing::Pairing;
 use ark_serialize::CanonicalSerialize;
 use ark_std::rand::{self};
 use ark_std::UniformRand;
-use blake3::hash;
+use blake3::OutputReader;
 use rand::thread_rng;
 use std::ops::Mul;
 
-/// Key Encapsulation Mechanism struct.
+/// Key encapsulation_single Mechanism struct.
 pub struct KEM<E: Pairing> {
     kzg: KZG<E>,
 }
@@ -24,12 +24,12 @@ impl<E: Pairing> KEM<E> {
 
     /// Encapsulation method.
     /// Returns the key and a ciphertext.
-    pub fn encapsulation(
+    pub fn encapsulate(
         &self,
         commitment: E::G1,
         point: E::ScalarField,
         value: E::ScalarField,
-    ) -> (E::G2, [u8; 32]) {
+    ) -> (E::G2, OutputReader) {
         let mut rng = thread_rng();
         let r = E::ScalarField::rand(&mut rng);
 
@@ -52,15 +52,17 @@ impl<E: Pairing> KEM<E> {
 
         // Get the key
         // k = H(s)
-        let key = hash(&secret_bytes);
-        let key_bytes = *key.as_bytes();
+        let mut key_hasher = blake3::Hasher::new();
+        key_hasher.update(&secret_bytes);
 
-        (ciphertext, key_bytes)
+        // Return the key as a hash reader to enable custom key length.
+        // (ct, k)
+        (ciphertext, key_hasher.finalize_xof())
     }
 
     /// Decapsulation method.
     /// Returns the key.
-    pub fn decapsulation(&self, proof: E::G1, ciphertext: E::G2) -> [u8; 32] {
+    pub fn decapsulate(&self, proof: E::G1, ciphertext: E::G2) -> OutputReader {
         // Calculate secret
         // s = e(proof, ct)
         let secret = E::pairing(proof, ciphertext);
@@ -70,10 +72,22 @@ impl<E: Pairing> KEM<E> {
 
         // Get the key
         // k = H(s)
-        let key = hash(&secret_bytes);
-        let key_bytes = *key.as_bytes();
+        let mut key_hasher = blake3::Hasher::new();
+        key_hasher.update(&secret_bytes);
 
-        key_bytes
+        // Return the key as a hash reader to enable custom key length.
+        key_hasher.finalize_xof()
+    }
+
+    /// Encapsulates a set of points and values for a commitment.
+    /// Returns the keys and ciphertexts.
+    pub fn encapsulate_set(
+        &self,
+        commitment: E::G1,
+        points: &[E::ScalarField],
+        values: &[E::ScalarField],
+    ) -> (Vec<E::G2>, Vec<[u8; 32]>) {
+        todo!()
     }
 }
 
@@ -84,7 +98,6 @@ mod tests {
     use ark_bls12_381::{Bls12_381, Fr, G1Projective, G2Projective};
     use ark_std::test_rng;
     use ark_std::UniformRand;
-
     #[test]
     fn test_encapsulation_decapsulation() {
         let rng = &mut test_rng();
@@ -108,17 +121,21 @@ mod tests {
         let commitment = kem.kzg.commit(&p).unwrap();
 
         // Encapsulate
-        let (ciphertext, encapsulation_key) = kem.encapsulation(commitment, point, val);
+        let (ciphertext, mut enc_key) = kem.encapsulate(commitment, point, val);
+        let mut enc_key_bytes = [0u8; 32];
+        enc_key.fill(&mut enc_key_bytes);
 
         // Decapsulate
         let proof = kem.kzg.open(&p, &point).unwrap();
-        let decapsulated_key = kem.decapsulation(proof, ciphertext);
+        let mut dec_key = kem.decapsulate(proof, ciphertext);
+        let mut dec_key_bytes = [0u8; 32];
+        dec_key.fill(&mut dec_key_bytes);
 
-        assert_eq!(encapsulation_key, decapsulated_key);
+        assert_eq!(enc_key_bytes, dec_key_bytes);
     }
 
     #[test]
-    fn test_decapsulation_with_invalid_proof() {
+    fn test_decapsulation_invalid_proof() {
         let rng = &mut test_rng();
         let g1_gen = G1Projective::rand(rng);
         let g2_gen = G2Projective::rand(rng);
@@ -140,21 +157,25 @@ mod tests {
         let commitment = kem.kzg.commit(&p).unwrap();
 
         // Encapsulate
-        let (ciphertext, encapsulation_key) = kem.encapsulation(commitment, point, val);
+        let (ciphertext, mut enc_key) = kem.encapsulate(commitment, point, val);
+        let mut enc_key_bytes = [0u8; 32];
+        enc_key.fill(&mut enc_key_bytes);
 
         // Generate an invalid proof (e.g., for a different point)
         let wrong_point: Fr = Fr::rand(rng);
         let invalid_proof = kem.kzg.open(&p, &wrong_point).unwrap();
 
         // Attempt to decapsulate with the invalid proof
-        let decapsulated_key = kem.decapsulation(invalid_proof, ciphertext);
+        let mut dec_key = kem.decapsulate(invalid_proof, ciphertext);
+        let mut dec_key_bytes = [0u8; 32];
+        dec_key.fill(&mut dec_key_bytes);
 
         // The keys should not match
-        assert_ne!(encapsulation_key, decapsulated_key);
+        assert_ne!(enc_key_bytes, dec_key_bytes);
     }
 
     #[test]
-    fn test_decapsulation_with_invalid_ciphertext() {
+    fn test_decapsulation_invalid_ciphertext() {
         let rng = &mut test_rng();
         let g1_gen = G1Projective::rand(rng);
         let g2_gen = G2Projective::rand(rng);
@@ -176,21 +197,26 @@ mod tests {
         let commitment = kem.kzg.commit(&p).unwrap();
 
         // Encapsulate
-        let (ciphertext, encapsulation_key) = kem.encapsulation(commitment, point, val);
+        let (ciphertext, mut enc_key) = kem.encapsulate(commitment, point, val);
+        let mut enc_key_bytes = [0u8; 32];
+        enc_key.fill(&mut enc_key_bytes);
 
         // Generate an invalid ciphertext (e.g., by using a different random value)
         let invalid_ciphertext = ciphertext.mul(Fr::rand(rng));
 
         // Attempt to decapsulate with the invalid ciphertext
         let proof = kem.kzg.open(&p, &point).unwrap();
-        let decapsulated_key = kem.decapsulation(proof, invalid_ciphertext);
+
+        let mut dec_key = kem.decapsulate(proof, invalid_ciphertext);
+        let mut dec_key_bytes = [0u8; 32];
+        dec_key.fill(&mut dec_key_bytes);
 
         // The keys should not match
-        assert_ne!(encapsulation_key, decapsulated_key);
+        assert_ne!(enc_key_bytes, dec_key_bytes);
     }
 
     #[test]
-    fn test_decapsulation_with_mismatched_proof_and_ciphertext() {
+    fn test_decapsulation_wrong_proof_ciphertext() {
         let rng = &mut test_rng();
         let g1_gen = G1Projective::rand(rng);
         let g2_gen = G2Projective::rand(rng);
@@ -213,15 +239,19 @@ mod tests {
         let commitment = kem.kzg.commit(&p).unwrap();
 
         // Encapsulate with point1
-        let (ciphertext1, encapsulation_key1) = kem.encapsulation(commitment, point1, val1);
+        let (ciphertext1, mut enc_key) = kem.encapsulate(commitment, point1, val1);
+        let mut enc_key_bytes = [0u8; 32];
+        enc_key.fill(&mut enc_key_bytes);
 
-        // Generate proof for point2
+        // Proof for point2
         let proof2 = kem.kzg.open(&p, &point2).unwrap();
 
-        // Attempt to decapsulate with a mismatched proof and ciphertext
-        let decapsulated_key = kem.decapsulation(proof2, ciphertext1);
+        // Decapsulate with proof for point2
+        let mut dec_key = kem.decapsulate(proof2, ciphertext1);
+        let mut dec_key_bytes = [0u8; 32];
+        dec_key.fill(&mut dec_key_bytes);
 
-        // The keys should not match
-        assert_ne!(encapsulation_key1, decapsulated_key);
+        // Keys should not match
+        assert_ne!(enc_key_bytes, dec_key_bytes);
     }
 }
