@@ -1,6 +1,6 @@
 //! KEM Module
 //!
-//! This module contains the implementation of an Extractable Witness Key encapsulation_single Mechanism (KEM).
+//! This module contains the implementation of an Extractable Witness Key Encapsulation Mechanism (KEM).
 
 use crate::kzg::KZG;
 use ark_ec::pairing::Pairing;
@@ -11,7 +11,7 @@ use rand::thread_rng;
 use std::ops::Mul;
 use thiserror::Error;
 
-/// Key encapsulation_single Mechanism struct.
+/// Key Encapsulation Mechanism struct.
 pub struct KEM<E: Pairing> {
     kzg: KZG<E>,
 }
@@ -204,7 +204,7 @@ mod tests {
         let mut enc_key_bytes = [0u8; 32];
         enc_key.fill(&mut enc_key_bytes);
 
-        // Generate an invalid proof (e.g., for a different point)
+        // Generate an invalid proof
         let wrong_point: Fr = Fr::rand(rng);
         let invalid_proof = kem.kzg.open(&p, &wrong_point).unwrap();
 
