@@ -1,8 +1,8 @@
-//! KZG Module
+//! # KZG Module
 //!
 //! This module contains the implementation of the KZG polynomial commitment scheme.
 
-use crate::operations::*;
+use crate::pol_op::*;
 use ark_ec::pairing::Pairing;
 use ark_ff::{Field, Zero};
 use std::ops::Mul;

@@ -1,4 +1,4 @@
-//! KEM Module
+//! # KEM Module
 //!
 //! This module contains the implementation of an Extractable Witness Key Encapsulation Mechanism (KEM).
 
@@ -121,6 +121,11 @@ impl<E: Pairing> KEM<E> {
             .map(|(&proof, &ciphertext)| self.decapsulate(proof, ciphertext))
             .collect()
     }
+
+    /// Returns KZG scheme
+    pub fn kzg(&self) -> &KZG<E> {
+        &self.kzg
+    }
 }
 
 #[derive(Error, Debug)]
@@ -136,7 +141,7 @@ pub enum KEMError {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::operations::evaluate_polynomial;
+    use crate::pol_op::evaluate_polynomial;
     use ark_bls12_381::{Bls12_381, Fr, G1Projective, G2Projective};
     use ark_std::test_rng;
     use ark_std::UniformRand;

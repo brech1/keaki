@@ -1,6 +1,6 @@
-//! Operations Module
+//! # Polynomial Operations Module
 //!
-//! This module contains polynomial operations.
+//! This module contains functions to perform operations on polynomials.
 
 use ark_ec::pairing::Pairing;
 use ark_ff::{Field, One, Zero};
@@ -12,26 +12,24 @@ pub fn subtract_polynomials<E: Pairing>(
     p: &[E::ScalarField],
     q: &[E::ScalarField],
 ) -> Vec<E::ScalarField> {
-    let max_len = p.len().max(q.len());
-    let mut result = Vec::with_capacity(max_len);
-
     let min_len = p.len().min(q.len());
+    let mut res = Vec::with_capacity(p.len().max(q.len()));
 
     // Subtract the overlapping parts
     for i in 0..min_len {
-        result.push(p[i] - q[i]);
+        res.push(p[i] - q[i]);
     }
 
     // Handle remaining terms in the longer polynomial
     if p.len() > min_len {
-        result.extend_from_slice(&p[min_len..]);
+        res.extend_from_slice(&p[min_len..]);
     } else {
         for &coeff in &q[min_len..] {
-            result.push(-coeff);
+            res.push(-coeff);
         }
     }
 
-    result
+    res
 }
 
 /// Multiplies two polynomials.
