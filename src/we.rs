@@ -1,7 +1,8 @@
 //! # Extractable Witness Encryption Module
 //!
-//! This module contains the implementation of an Extractable Witness Encryption from an Extractable Witness KEM.
+//! This module contains the implementation of an Extractable Witness Encryption from an Extractable Witness KEM.'
 
+#![allow(clippy::type_complexity)]
 use crate::kem::{KEMError, KEM};
 use ark_ec::pairing::Pairing;
 use thiserror::Error;
