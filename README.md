@@ -1,4 +1,4 @@
-# WE-KZG (wip)
+# ケヤキ 🌳
 
 [![License][mit-badge]][mit-url]
 [![Build][actions-badge]][actions-url]
@@ -11,13 +11,12 @@
 [codecov-badge]: https://codecov.io/github/brech1/we-kzg/graph/badge.svg
 [codecov-url]: https://app.codecov.io/github/brech1/we-kzg/
 
-This crate is a Rust implementation of an **Extractable Witness Encryption for KZG Commitments** scheme.
+**Keaki** is a Rust implementation of an Extractable Witness Encryption for KZG Commitments scheme.
 
 Based on the following paper:
 
-- [Extractable Witness Encryption for KZG Commitments
-  and Efficient Laconic OT](https://eprint.iacr.org/2024/264.pdf).
+- [Extractable Witness Encryption for KZG Commitments and Efficient Laconic OT](https://eprint.iacr.org/2024/264.pdf)
 
-A great set of notes on this paper is available here:
+A great post on it can be found here:
 
-- [Notes on Extractable Witness Encryption for KZG Commitments and Efficient Laconic OT](https://hackmd.io/@letargicus/Hk3rpPnK0)
+- [Notes on Extractable Witness Encryption for KZG Commitments and Efficient Laconic OT](https://www.leku.blog/kzg-we/)

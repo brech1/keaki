@@ -1,6 +1,6 @@
-//! KEM Module
+//! # Key Encapsulation Module
 //!
-//! This module contains the implementation of an Extractable Witness Key Encapsulation Mechanism (KEM).
+//! This module contains the implementation of an Extractable Witness Key Encapsulation Mechanism.
 
 use crate::kzg::KZG;
 use ark_ec::pairing::Pairing;
@@ -11,33 +11,35 @@ use rand::thread_rng;
 use std::ops::Mul;
 use thiserror::Error;
 
-/// Key Encapsulation Mechanism struct.
+/// Extractable Witness Key Encapsulation Mechanism struct.
 pub struct KEM<E: Pairing> {
     kzg: KZG<E>,
 }
 
 impl<E: Pairing> KEM<E> {
-    /// Creates a new KEM instance.
+    /// Creates a new instance.
     pub fn new(kzg: KZG<E>) -> Self {
         Self { kzg }
     }
 
     /// Encapsulation method.
-    /// Returns the ciphertext and the key.
+    /// Generates a key for a commitment and a point-value pair.
     pub fn encapsulate(
         &self,
         commitment: E::G1,
         point: E::ScalarField,
         value: E::ScalarField,
     ) -> Result<(E::G2, OutputReader), KEMError> {
-        let mut rng = thread_rng();
-        let r = E::ScalarField::rand(&mut rng);
-
         // [beta]_1
         let value_in_g1: E::G1 = self.kzg.g1_gen().mul(value);
 
         // (com - [beta]_1)
         let com_beta = commitment - value_in_g1;
+
+        // Generate a random value
+        // This allows the generated secret not to be tied to the inputs.
+        let mut rng = thread_rng();
+        let r = E::ScalarField::rand(&mut rng);
 
         // Calculate secret
         // s = e(r * (com - [beta]_1), g2)
@@ -47,12 +49,13 @@ impl<E: Pairing> KEM<E> {
             .serialize_uncompressed(&mut secret_bytes)
             .map_err(KEMError::SerializationError)?;
 
-        // Calculate ciphertext
+        // Calculate a ciphertext to share the randomness used in the encapsulation.
         // ct = r([tau]_2 - [alpha]_2)
         let tau_alpha: E::G2 = self.kzg.tau_g2() - self.kzg.g2_gen().mul(point);
         let ciphertext: E::G2 = tau_alpha.mul(r);
 
-        // Get the key
+        // Generate the key
+        // Hash the secret to make the key indistinguishable from random.
         // k = H(s)
         let mut key_hasher = blake3::Hasher::new();
         key_hasher.update(&secret_bytes);
@@ -63,7 +66,8 @@ impl<E: Pairing> KEM<E> {
     }
 
     /// Decapsulation method.
-    /// Returns the key.
+    /// Generates a key for an opening and a ciphertext.
+    /// The generated key will be the same as the one generated during encapsulation for a valid opening.
     pub fn decapsulate(&self, proof: E::G1, ciphertext: E::G2) -> Result<OutputReader, KEMError> {
         // Calculate secret
         // s = e(proof, ct)
@@ -121,6 +125,11 @@ impl<E: Pairing> KEM<E> {
             .map(|(&proof, &ciphertext)| self.decapsulate(proof, ciphertext))
             .collect()
     }
+
+    /// Returns KZG scheme
+    pub fn kzg(&self) -> &KZG<E> {
+        &self.kzg
+    }
 }
 
 #[derive(Error, Debug)]
@@ -136,7 +145,7 @@ pub enum KEMError {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::operations::evaluate_polynomial;
+    use crate::pol_op::evaluate_polynomial;
     use ark_bls12_381::{Bls12_381, Fr, G1Projective, G2Projective};
     use ark_std::test_rng;
     use ark_std::UniformRand;
