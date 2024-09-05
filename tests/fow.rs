@@ -186,6 +186,7 @@ impl Game {
         let alice_pol = lagrange_interpolation::<Bls12_381>(&alice_alphas, &alice_ones).unwrap();
         let bob_pol = lagrange_interpolation::<Bls12_381>(&bob_alphas, &bob_ones).unwrap();
 
+        // FIXME: Basically we're committing to the same polynomial for both players
         println!("Alice's polynomial: {:?}", alice_pol);
         println!("Bob's polynomial: {:?}", bob_pol);
 
