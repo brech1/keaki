@@ -1,4 +1,8 @@
 //! Fog of War
+//!
+//! To run:
+//!
+//! cargo test test_fog_of_war_game -- --nocapture
 
 use ark_bls12_381::{
     g1::{G1_GENERATOR_X, G1_GENERATOR_Y},
@@ -8,7 +12,7 @@ use ark_bls12_381::{
 use keaki::{kem::KEM, kzg::KZG, pol_op::lagrange_interpolation, we::WE};
 use rand::{seq::IteratorRandom, thread_rng};
 
-pub const BOARD_SIZE: usize = 6;
+pub const BOARD_SIZE: usize = 4;
 pub const BOARD_TILES: usize = BOARD_SIZE * BOARD_SIZE;
 
 // Starting Positions
@@ -172,35 +176,60 @@ impl Game {
         for &val in alice_adjacents.iter() {
             alice_alphas.push(Fr::from(val as u32));
         }
+        let alice_alphas_len = alice_alphas.len();
 
         bob_alphas.push(Fr::from(BOB_STARTING_POS as u32));
         for &val in bob_adjacents.iter() {
             bob_alphas.push(Fr::from(val as u32));
         }
+        let bob_alphas_len = bob_alphas.len();
 
-        // Construct array of ones
-        let alice_ones = vec![Fr::from(1); alice_alphas.len()];
-        let bob_ones = vec![Fr::from(1); bob_alphas.len()];
+        // Commit to the full polynomial.
+        let mut players_full_alphas = vec![Fr::from(0); BOARD_TILES];
+        for i in 0..BOARD_TILES {
+            players_full_alphas[i] = Fr::from(i as u32);
+        }
 
-        // Interpolate alphas
-        let alice_pol = lagrange_interpolation::<Bls12_381>(&alice_alphas, &alice_ones).unwrap();
-        let bob_pol = lagrange_interpolation::<Bls12_381>(&bob_alphas, &bob_ones).unwrap();
+        // These vectors will be one at the position of the player and zero elsewhere
+        let mut alice_full_betas = vec![Fr::from(0); BOARD_TILES];
+        alice_full_betas[ALICE_STARTING_POS] = Fr::from(1);
+        let mut bob_full_betas = vec![Fr::from(0); BOARD_TILES];
+        bob_full_betas[BOB_STARTING_POS] = Fr::from(1);
 
-        // FIXME: Basically we're committing to the same polynomial for both players
-        println!("Alice's polynomial: {:?}", alice_pol);
-        println!("Bob's polynomial: {:?}", bob_pol);
+        // Interpolate
+        let alice_pol =
+            lagrange_interpolation::<Bls12_381>(&players_full_alphas, &alice_full_betas).unwrap();
+        let bob_pol =
+            lagrange_interpolation::<Bls12_381>(&players_full_alphas, &bob_full_betas).unwrap();
 
         // Commit to Alice and Bob's initial positions
         let alice_com = we.kem().kzg().commit(&alice_pol).unwrap();
         let bob_com = we.kem().kzg().commit(&bob_pol).unwrap();
 
-        // Encrypt Alice and Bob's initial positions using the opponent's commitment
+        // Somehow we should verify that alice is providing correct encryptions of her position and vice versa.
+        // Encrypt Alice and Bob's initial position using the opponent's commitment
+        let mut alice_message = Vec::from(MESSAGE);
+        alice_message.push(ALICE_STARTING_POS as u8);
+
         let alice_enc_pos = we
-            .encrypt(bob_com, alice_alphas, alice_ones, MESSAGE)
+            .encrypt(
+                bob_com,
+                alice_alphas,
+                vec![Fr::from(1); alice_alphas_len],
+                &alice_message,
+            )
             .unwrap();
 
+        let mut bob_message = Vec::from(MESSAGE);
+        bob_message.push(BOB_STARTING_POS as u8);
+
         let bob_enc_pos = we
-            .encrypt(alice_com, bob_alphas, bob_ones, MESSAGE)
+            .encrypt(
+                alice_com,
+                bob_alphas,
+                vec![Fr::from(1); bob_alphas_len],
+                &bob_message,
+            )
             .unwrap();
 
         Self {
@@ -233,10 +262,10 @@ impl Game {
             Some(pos) => {
                 if is_alice_turn {
                     println!("Alice wins!");
-                    Board::display(self.alice_pos, Some(pos), self.step);
+                    Board::display(self.alice_pos, Some(pos as usize), self.step);
                 } else {
                     println!("Bob wins!");
-                    Board::display(self.bob_pos, Some(pos), self.step);
+                    Board::display(self.bob_pos, Some(pos as usize), self.step);
                 }
 
                 self.finished = true;
@@ -252,7 +281,7 @@ impl Game {
     }
 
     /// Attempts to decrypt the opponent's position. Returns true if successful (opponent is visible).
-    pub fn try_decrypt_opponent_position(&self, is_alice_turn: bool) -> Option<usize> {
+    pub fn try_decrypt_opponent_position(&self, is_alice_turn: bool) -> Option<u8> {
         let (opponent_enc_pos, player_pos) = if is_alice_turn {
             (&self.bob_enc_pos, self.alice_pos)
         } else {
@@ -266,37 +295,38 @@ impl Game {
         let player_adjacents = Board::get_adjacent_positions(player_pos);
         println!("Player's adjacent positions: {:?}", player_adjacents);
 
-        let mut player_alphas = Vec::new();
-        player_alphas.push(Fr::from(player_pos as u32));
-        for &val in player_adjacents.iter() {
-            player_alphas.push(Fr::from(val as u32));
+        let mut player_full_alphas = vec![Fr::from(0); BOARD_TILES];
+        for i in 0..BOARD_TILES {
+            player_full_alphas[i] = Fr::from(i as u32);
         }
 
-        // Construct array of ones
-        let alphas_len = player_alphas.len();
-        let ones = vec![Fr::from(1); alphas_len];
+        // This vector will be one at the position of the player and zero elsewhere
+        let mut player_full_betas = vec![Fr::from(0); BOARD_TILES];
+        player_full_betas[player_pos] = Fr::from(1);
 
-        // Interpolate alphas
-        let player_pol = lagrange_interpolation::<Bls12_381>(&player_alphas, &ones).unwrap();
+        // Interpolate
+        let player_pol =
+            lagrange_interpolation::<Bls12_381>(&player_full_alphas, &player_full_betas).unwrap();
 
-        // Open the polynomial at the player's alphas
-        let mut proofs = Vec::new();
-        for alpha in player_alphas {
-            let proof = self.we.kem().kzg().open(&player_pol, &alpha).unwrap();
-            proofs.push(proof);
-        }
+        // Generate a proof for the player's position
+        let proof = self
+            .we
+            .kem()
+            .kzg()
+            .open(&player_pol, &Fr::from(player_pos as u32))
+            .unwrap();
 
-        for (index, &proof) in proofs.iter().enumerate() {
-            for (key_ct, msg_ct) in opponent_enc_pos.iter() {
-                let msg = self.we.decrypt_single(proof, *key_ct, msg_ct).unwrap();
+        for (key_ct, msg_ct) in opponent_enc_pos {
+            let msg = self.we.decrypt_single(proof, *key_ct, msg_ct).unwrap();
 
-                if msg == MESSAGE {
-                    println!("Decryption successful!");
+            if msg.starts_with(MESSAGE) {
+                println!("Decryption successful!");
 
-                    // Get opponent's position from proof index
-                    let op_pos = player_adjacents[index];
-                    return Some(op_pos as usize);
-                }
+                // Get the opponent's position
+                let op_pos = *msg.last().unwrap();
+
+                println!("Opponent's position: {}", op_pos);
+                return Some(op_pos);
             }
         }
 
@@ -316,29 +346,46 @@ impl Game {
 
         // Display the new position
         println!("Player moved to: {}", new_pos);
+        let player_adjacents = Board::get_adjacent_positions(new_pos);
+        println!("Player's adjacent positions: {:?}", player_adjacents);
         Board::display(new_pos, None, self.step);
 
         // Prepare alphas (indices where player position is 1)
         let mut player_alphas = Vec::new();
         player_alphas.push(Fr::from(new_pos as u32));
-        for &val in Board::get_adjacent_positions(new_pos).iter() {
+        for &val in player_adjacents.iter() {
             player_alphas.push(Fr::from(val as u32));
         }
+        let player_alphas_len = player_alphas.len();
 
-        // Construct array of ones
-        let alphas_len = player_alphas.len();
-        let ones = vec![Fr::from(1); alphas_len];
+        let mut player_full_alphas = vec![Fr::from(0); BOARD_TILES];
+        for i in 0..BOARD_TILES {
+            player_full_alphas[i] = Fr::from(i as u32);
+        }
 
-        // Interpolate alphas
-        let alphas_lagrange = lagrange_interpolation::<Bls12_381>(&player_alphas, &ones).unwrap();
+        // This vector will be one at the position of the player and zero elsewhere
+        let mut player_full_betas = vec![Fr::from(0); BOARD_TILES];
+        player_full_betas[new_pos] = Fr::from(1);
+
+        // Interpolate
+        let player_full_pol =
+            lagrange_interpolation::<Bls12_381>(&player_full_alphas, &player_full_betas).unwrap();
 
         // Commit to the new position
-        let player_com = self.we.kem().kzg().commit(&alphas_lagrange).unwrap();
+        let player_com = self.we.kem().kzg().commit(&player_full_pol).unwrap();
 
         // Encrypt the new position vector using the opponent's commitment
+        let mut player_message = Vec::from(MESSAGE);
+        player_message.push(new_pos as u8);
+
         let enc_pos = self
             .we
-            .encrypt(opponent_com, player_alphas, ones, MESSAGE)
+            .encrypt(
+                opponent_com,
+                player_alphas,
+                vec![Fr::from(1); player_alphas_len],
+                &player_message,
+            )
             .unwrap();
 
         // Update the player's encrypted position and commitment
