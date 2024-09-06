@@ -1,6 +1,6 @@
 //! # Key Encapsulation Module
 //!
-//! This module contains the implementation of an Extractable Witness Key Encapsulation Mechanism.
+//! This module implements the **Extractable Witness Key Encapsulation Mechanism** functions.
 
 use crate::kzg::KZG;
 use ark_ec::pairing::Pairing;
@@ -11,125 +11,107 @@ use rand::thread_rng;
 use std::ops::Mul;
 use thiserror::Error;
 
-/// Extractable Witness Key Encapsulation Mechanism struct.
-pub struct KEM<E: Pairing> {
-    kzg: KZG<E>,
+/// Encapsulation.
+/// Generates a key for a commitment and a point-value pair.
+pub fn encapsulate<E: Pairing>(
+    kzg: &KZG<E>,
+    commitment: E::G1,
+    point: E::ScalarField,
+    value: E::ScalarField,
+) -> Result<(E::G2, OutputReader), KEMError> {
+    // [beta]_1
+    let value_in_g1: E::G1 = kzg.g1_gen().mul(value);
+
+    // (com - [beta]_1)
+    let com_beta = commitment - value_in_g1;
+
+    // Generate a random value
+    // This allows the generated secret not to be tied to the inputs.
+    let mut rng = thread_rng();
+    let r = E::ScalarField::rand(&mut rng);
+
+    // Calculate secret
+    // s = e(r * (com - [beta]_1), g2)
+    let secret = E::pairing(com_beta.mul(r), kzg.g2_gen());
+    let mut secret_bytes = Vec::<u8>::new();
+    secret
+        .serialize_uncompressed(&mut secret_bytes)
+        .map_err(KEMError::SerializationError)?;
+
+    // Calculate a ciphertext to share the randomness used in the encapsulation.
+    // ct = r([tau]_2 - [alpha]_2)
+    let tau_alpha: E::G2 = kzg.tau_g2() - kzg.g2_gen().mul(point);
+    let ciphertext: E::G2 = tau_alpha.mul(r);
+
+    // Generate the key
+    // Hash the secret to make the key indistinguishable from random.
+    // k = H(s)
+    let mut key_hasher = blake3::Hasher::new();
+    key_hasher.update(&secret_bytes);
+
+    // Return the key as a hash reader to enable custom key length.
+    // (ct, k)
+    Ok((ciphertext, key_hasher.finalize_xof()))
 }
 
-impl<E: Pairing> KEM<E> {
-    /// Creates a new instance.
-    pub fn new(kzg: KZG<E>) -> Self {
-        Self { kzg }
+/// Decapsulation.
+/// Generates a key for an opening and a ciphertext.
+/// The generated key will be the same as the one generated during encapsulation for a valid opening.
+pub fn decapsulate<E: Pairing>(proof: E::G1, ciphertext: E::G2) -> Result<OutputReader, KEMError> {
+    // Calculate secret
+    // s = e(proof, ct)
+    let secret = E::pairing(proof, ciphertext);
+
+    let mut secret_bytes = Vec::<u8>::new();
+    secret
+        .serialize_uncompressed(&mut secret_bytes)
+        .map_err(KEMError::SerializationError)?;
+
+    // Get the key
+    // k = H(s)
+    let mut key_hasher = blake3::Hasher::new();
+    key_hasher.update(&secret_bytes);
+
+    // Return the key as a hash reader to enable custom key length.
+    Ok(key_hasher.finalize_xof())
+}
+
+/// TODO: Naive implementation. Will be updated with FK, an efficient method to compute multiple openings.
+/// Encapsulates a set of points and values for a commitment.
+/// Returns the keys and ciphertexts.
+pub fn encapsulate_set<E: Pairing>(
+    kzg: &KZG<E>,
+    commitment: E::G1,
+    points: &[E::ScalarField],
+    values: &[E::ScalarField],
+) -> Result<(Vec<E::G2>, Vec<OutputReader>), KEMError> {
+    if points.len() != values.len() {
+        return Err(KEMError::EncapsulationInputsLengthError);
     }
 
-    /// Encapsulation method.
-    /// Generates a key for a commitment and a point-value pair.
-    pub fn encapsulate(
-        &self,
-        commitment: E::G1,
-        point: E::ScalarField,
-        value: E::ScalarField,
-    ) -> Result<(E::G2, OutputReader), KEMError> {
-        // [beta]_1
-        let value_in_g1: E::G1 = self.kzg.g1_gen().mul(value);
+    points
+        .iter()
+        .zip(values.iter())
+        .map(|(&point, &value)| encapsulate::<E>(kzg, commitment, point, value))
+        .collect::<Result<Vec<_>, _>>()
+        .map(|v| v.into_iter().unzip())
+}
 
-        // (com - [beta]_1)
-        let com_beta = commitment - value_in_g1;
-
-        // Generate a random value
-        // This allows the generated secret not to be tied to the inputs.
-        let mut rng = thread_rng();
-        let r = E::ScalarField::rand(&mut rng);
-
-        // Calculate secret
-        // s = e(r * (com - [beta]_1), g2)
-        let secret = E::pairing(com_beta.mul(r), self.kzg.g2_gen());
-        let mut secret_bytes = Vec::<u8>::new();
-        secret
-            .serialize_uncompressed(&mut secret_bytes)
-            .map_err(KEMError::SerializationError)?;
-
-        // Calculate a ciphertext to share the randomness used in the encapsulation.
-        // ct = r([tau]_2 - [alpha]_2)
-        let tau_alpha: E::G2 = self.kzg.tau_g2() - self.kzg.g2_gen().mul(point);
-        let ciphertext: E::G2 = tau_alpha.mul(r);
-
-        // Generate the key
-        // Hash the secret to make the key indistinguishable from random.
-        // k = H(s)
-        let mut key_hasher = blake3::Hasher::new();
-        key_hasher.update(&secret_bytes);
-
-        // Return the key as a hash reader to enable custom key length.
-        // (ct, k)
-        Ok((ciphertext, key_hasher.finalize_xof()))
+/// Decapsulates a set of proofs and ciphertexts.
+/// Returns the keys.
+pub fn decapsulate_set<E: Pairing>(
+    proofs: &[E::G1],
+    ciphertexts: &[E::G2],
+) -> Result<Vec<OutputReader>, KEMError> {
+    if proofs.len() != ciphertexts.len() {
+        return Err(KEMError::DecapsulationInputsLengthError);
     }
 
-    /// Decapsulation method.
-    /// Generates a key for an opening and a ciphertext.
-    /// The generated key will be the same as the one generated during encapsulation for a valid opening.
-    pub fn decapsulate(&self, proof: E::G1, ciphertext: E::G2) -> Result<OutputReader, KEMError> {
-        // Calculate secret
-        // s = e(proof, ct)
-        let secret = E::pairing(proof, ciphertext);
-
-        let mut secret_bytes = Vec::<u8>::new();
-        secret
-            .serialize_uncompressed(&mut secret_bytes)
-            .map_err(KEMError::SerializationError)?;
-
-        // Get the key
-        // k = H(s)
-        let mut key_hasher = blake3::Hasher::new();
-        key_hasher.update(&secret_bytes);
-
-        // Return the key as a hash reader to enable custom key length.
-        Ok(key_hasher.finalize_xof())
-    }
-
-    /// TODO: Naive implementation. Will be updated with FK, an efficient method to compute multiple openings.
-    /// Encapsulates a set of points and values for a commitment.
-    /// Returns the keys and ciphertexts.
-    pub fn encapsulate_set(
-        &self,
-        commitment: E::G1,
-        points: &[E::ScalarField],
-        values: &[E::ScalarField],
-    ) -> Result<(Vec<E::G2>, Vec<OutputReader>), KEMError> {
-        if points.len() != values.len() {
-            return Err(KEMError::EncapsulationInputsLengthError);
-        }
-
-        points
-            .iter()
-            .zip(values.iter())
-            .map(|(&point, &value)| self.encapsulate(commitment, point, value))
-            .collect::<Result<Vec<_>, _>>()
-            .map(|v| v.into_iter().unzip())
-    }
-
-    /// Decapsulates a set of proofs and ciphertexts.
-    /// Returns the keys.
-    pub fn decapsulate_set(
-        &self,
-        proofs: &[E::G1],
-        ciphertexts: &[E::G2],
-    ) -> Result<Vec<OutputReader>, KEMError> {
-        if proofs.len() != ciphertexts.len() {
-            return Err(KEMError::DecapsulationInputsLengthError);
-        }
-
-        proofs
-            .iter()
-            .zip(ciphertexts.iter())
-            .map(|(&proof, &ciphertext)| self.decapsulate(proof, ciphertext))
-            .collect()
-    }
-
-    /// Returns KZG scheme
-    pub fn kzg(&self) -> &KZG<E> {
-        &self.kzg
-    }
+    proofs
+        .iter()
+        .zip(ciphertexts.iter())
+        .map(|(&proof, &ciphertext)| decapsulate::<E>(proof, ciphertext))
+        .collect()
 }
 
 #[derive(Error, Debug)]
@@ -159,7 +141,6 @@ mod tests {
         let max_degree = 10;
         let point: Fr = Fr::rand(rng);
         let kzg: KZG<Bls12_381> = KZG::setup(g1_gen, g2_gen, max_degree, secret);
-        let kem: KEM<Bls12_381> = KEM::new(kzg);
 
         // p(x) = 7 x^4 + 9 x^3 - 5 x^2 - 25 x - 24
         let p = vec![
@@ -170,16 +151,16 @@ mod tests {
             Fr::from(7),
         ];
         let val = evaluate_polynomial::<Bls12_381>(&p, &point);
-        let commitment = kem.kzg.commit(&p).unwrap();
+        let commitment = kzg.commit(&p).unwrap();
 
         // Encapsulate
-        let (ciphertext, mut enc_key) = kem.encapsulate(commitment, point, val).unwrap();
+        let (ciphertext, mut enc_key) = encapsulate(&kzg, commitment, point, val).unwrap();
         let mut enc_key_bytes = [0u8; 32];
         enc_key.fill(&mut enc_key_bytes);
 
         // Decapsulate
-        let proof = kem.kzg.open(&p, &point).unwrap();
-        let mut dec_key = kem.decapsulate(proof, ciphertext).unwrap();
+        let proof = kzg.open(&p, &point).unwrap();
+        let mut dec_key = decapsulate::<Bls12_381>(proof, ciphertext).unwrap();
         let mut dec_key_bytes = [0u8; 32];
         dec_key.fill(&mut dec_key_bytes);
 
@@ -195,7 +176,6 @@ mod tests {
         let max_degree = 10;
         let point: Fr = Fr::rand(rng);
         let kzg: KZG<Bls12_381> = KZG::setup(g1_gen, g2_gen, max_degree, secret);
-        let kem: KEM<Bls12_381> = KEM::new(kzg);
 
         // p(x) = 7 x^4 + 9 x^3 - 5 x^2 - 25 x - 24
         let p = vec![
@@ -206,19 +186,20 @@ mod tests {
             Fr::from(7),
         ];
         let val = evaluate_polynomial::<Bls12_381>(&p, &point);
-        let commitment = kem.kzg.commit(&p).unwrap();
+        let commitment = kzg.commit(&p).unwrap();
 
         // Encapsulate
-        let (ciphertext, mut enc_key) = kem.encapsulate(commitment, point, val).unwrap();
+        let (ciphertext, mut enc_key) =
+            encapsulate::<Bls12_381>(&kzg, commitment, point, val).unwrap();
         let mut enc_key_bytes = [0u8; 32];
         enc_key.fill(&mut enc_key_bytes);
 
         // Generate an invalid proof
         let wrong_point: Fr = Fr::rand(rng);
-        let invalid_proof = kem.kzg.open(&p, &wrong_point).unwrap();
+        let invalid_proof = kzg.open(&p, &wrong_point).unwrap();
 
         // Attempt to decapsulate with the invalid proof
-        let mut dec_key = kem.decapsulate(invalid_proof, ciphertext).unwrap();
+        let mut dec_key = decapsulate::<Bls12_381>(invalid_proof, ciphertext).unwrap();
         let mut dec_key_bytes = [0u8; 32];
         dec_key.fill(&mut dec_key_bytes);
 
@@ -235,7 +216,6 @@ mod tests {
         let max_degree = 10;
         let point: Fr = Fr::rand(rng);
         let kzg: KZG<Bls12_381> = KZG::setup(g1_gen, g2_gen, max_degree, secret);
-        let kem: KEM<Bls12_381> = KEM::new(kzg);
 
         // p(x) = 7 x^4 + 9 x^3 - 5 x^2 - 25 x - 24
         let p = vec![
@@ -246,10 +226,11 @@ mod tests {
             Fr::from(7),
         ];
         let val = evaluate_polynomial::<Bls12_381>(&p, &point);
-        let commitment = kem.kzg.commit(&p).unwrap();
+        let commitment = kzg.commit(&p).unwrap();
 
         // Encapsulate
-        let (ciphertext, mut enc_key) = kem.encapsulate(commitment, point, val).unwrap();
+        let (ciphertext, mut enc_key) =
+            encapsulate::<Bls12_381>(&kzg, commitment, point, val).unwrap();
         let mut enc_key_bytes = [0u8; 32];
         enc_key.fill(&mut enc_key_bytes);
 
@@ -257,9 +238,9 @@ mod tests {
         let invalid_ciphertext = ciphertext.mul(Fr::rand(rng));
 
         // Attempt to decapsulate with the invalid ciphertext
-        let proof = kem.kzg.open(&p, &point).unwrap();
+        let proof = kzg.open(&p, &point).unwrap();
 
-        let mut dec_key = kem.decapsulate(proof, invalid_ciphertext).unwrap();
+        let mut dec_key = decapsulate::<Bls12_381>(proof, invalid_ciphertext).unwrap();
         let mut dec_key_bytes = [0u8; 32];
         dec_key.fill(&mut dec_key_bytes);
 
@@ -277,7 +258,6 @@ mod tests {
         let point1: Fr = Fr::rand(rng);
         let point2: Fr = Fr::rand(rng);
         let kzg: KZG<Bls12_381> = KZG::setup(g1_gen, g2_gen, max_degree, secret);
-        let kem: KEM<Bls12_381> = KEM::new(kzg);
 
         // p(x) = 7 x^4 + 9 x^3 - 5 x^2 - 25 x - 24
         let p = vec![
@@ -288,18 +268,19 @@ mod tests {
             Fr::from(7),
         ];
         let val1 = evaluate_polynomial::<Bls12_381>(&p, &point1);
-        let commitment = kem.kzg.commit(&p).unwrap();
+        let commitment = kzg.commit(&p).unwrap();
 
         // Encapsulate with point1
-        let (ciphertext1, mut enc_key) = kem.encapsulate(commitment, point1, val1).unwrap();
+        let (ciphertext1, mut enc_key) =
+            encapsulate::<Bls12_381>(&kzg, commitment, point1, val1).unwrap();
         let mut enc_key_bytes = [0u8; 32];
         enc_key.fill(&mut enc_key_bytes);
 
         // Proof for point2
-        let proof2 = kem.kzg.open(&p, &point2).unwrap();
+        let proof2 = kzg.open(&p, &point2).unwrap();
 
         // Decapsulate with proof for point2
-        let mut dec_key = kem.decapsulate(proof2, ciphertext1).unwrap();
+        let mut dec_key = decapsulate::<Bls12_381>(proof2, ciphertext1).unwrap();
         let mut dec_key_bytes = [0u8; 32];
         dec_key.fill(&mut dec_key_bytes);
 
@@ -315,7 +296,6 @@ mod tests {
         let secret = Fr::rand(rng);
         let max_degree = 10;
         let kzg: KZG<Bls12_381> = KZG::setup(g1_gen, g2_gen, max_degree, secret);
-        let kem: KEM<Bls12_381> = KEM::new(kzg);
 
         // Define the polynomial p(x) = 7 x^4 + 9 x^3 - 5 x^2 - 25 x - 24
         let p = vec![
@@ -325,7 +305,7 @@ mod tests {
             Fr::from(9),
             Fr::from(7),
         ];
-        let commitment = kem.kzg.commit(&p).unwrap();
+        let commitment = kzg.commit(&p).unwrap();
 
         // Define points and their corresponding values
         let points = vec![Fr::rand(rng), Fr::rand(rng), Fr::rand(rng)];
@@ -336,7 +316,7 @@ mod tests {
 
         // Encapsulate the set
         let (ciphertexts, mut enc_keys) =
-            kem.encapsulate_set(commitment, &points, &values).unwrap();
+            encapsulate_set::<Bls12_381>(&kzg, commitment, &points, &values).unwrap();
         let enc_keys_bytes: Vec<[u8; 32]> = enc_keys
             .iter_mut()
             .map(|enc_key| {
@@ -349,11 +329,11 @@ mod tests {
         // Generate proofs for the points
         let proofs: Vec<G1Projective> = points
             .iter()
-            .map(|point| kem.kzg.open(&p, point).unwrap())
+            .map(|point| kzg.open(&p, point).unwrap())
             .collect();
 
         // Decapsulate the set
-        let mut dec_keys = kem.decapsulate_set(&proofs, &ciphertexts).unwrap();
+        let mut dec_keys = decapsulate_set::<Bls12_381>(&proofs, &ciphertexts).unwrap();
         let dec_keys_bytes: Vec<[u8; 32]> = dec_keys
             .iter_mut()
             .map(|dec_key| {
