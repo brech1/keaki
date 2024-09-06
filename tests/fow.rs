@@ -1,8 +1,40 @@
-//! Fog of War
+//! # Fog of War
 //!
-//! To run:
+//! This test implements a two-player "tag" game with a fog of war mechanic, where players can only see their own position and adjacent tiles on a grid-based board.
 //!
+//! ## Objective
+//!
+//! The goal is for one player to find the other player's hidden position. Players take turns checking if their opponent is in view and moving to adjacent tiles if not.
+//!
+//! The game ends when one player decrypts the location of the other, indicating they are within visible range, thus winning the game.
+//!
+//! ## Game Mechanics
+//!
+//! - Each player starts at opposite ends of the board.
+//! - Players can only see their position and the adjacent tiles around them.
+//! - Each turn, a player attempts to decrypt the opponent's position. If successful, the game ends.
+//! - If the opponent's position is not visible, the player moves to a random adjacent tile.
+//! - This continues until one player finds the opponent’s position and wins.
+//!
+//! ## Cryptographic Setup
+//!
+//! The game utilizes WE to encrypt each player’s position. Players can only decrypt opponent positions when they are in or near visible range.
+//!
+//! - **KZG Commitment**: Both players commit their positions on the board using KZG, based on a polynomial interpolation of the position vector (1 at their position, 0 elsewhere).
+//! - **Encryption**: Each player encrypts their position using the opponent’s commitment, for it's position and all adjacent tiles.
+//! - **Decryption**: The player generates an opening proof for their position and attempts to decrypt the opponent's encrypted position ciphertexts.
+//! - **Move**: If the opponent's position is not visible, the player moves to a random adjacent tile, updates their position, commits, and re-encrypts their position.
+//!
+//! ## Running the Simulation
+//!
+//! The current test simulates a match between two players, Alice and Bob. The game progresses through turns until one player wins.
+//!
+//! To run the simulation:
+//!
+//! ```bash
 //! cargo test test_fog_of_war_game -- --nocapture
+//! ```
+//!
 
 use ark_bls12_381::{
     g1::{G1_GENERATOR_X, G1_GENERATOR_Y},
@@ -76,22 +108,6 @@ impl Board {
         valid_positions
     }
 
-    /// Returns a vec with 1s at the position and adjacent tiles, 0s elsewhere
-    pub fn pos_to_vec_with_adj(pos: usize) -> Vec<u8> {
-        let mut vec = vec![0; BOARD_TILES];
-
-        // Set the current position to 1
-        vec[pos] = 1;
-
-        // Get adjacent positions and set them to 1
-        let adj_positions = Board::get_adjacent_positions(pos);
-        for adj_pos in adj_positions {
-            vec[adj_pos] = 1;
-        }
-
-        vec
-    }
-
     /// Returns a random adjacent position
     pub fn get_random_adjacent_pos(pos: usize) -> usize {
         let adj_positions = Board::get_adjacent_positions(pos);
@@ -149,6 +165,7 @@ pub struct Game {
 }
 
 impl Game {
+    /// Game setup
     pub fn new(secret: Fr) -> Self {
         // Setup kzg
         let g1_generator = G1Affine::new(G1_GENERATOR_X, G1_GENERATOR_Y);
@@ -162,29 +179,29 @@ impl Game {
         println!("Alice's starting position: {}", ALICE_STARTING_POS);
         println!("Bob's starting position: {}", BOB_STARTING_POS);
 
-        // Prepare alphas (indices where player position is 1)
-        let mut alice_alphas = Vec::new();
-        let mut bob_alphas = Vec::new();
-
         let alice_adjacents = Board::get_adjacent_positions(ALICE_STARTING_POS);
         let bob_adjacents = Board::get_adjacent_positions(BOB_STARTING_POS);
 
         println!("Alice's adjacent positions: {:?}", alice_adjacents);
         println!("Bob's adjacent positions: {:?}", bob_adjacents);
 
+        // These alphas are 1 for the player's position and adjacent positions
+        // Are used to encrypt the player's position using the opponent's commitment
+        let mut alice_alphas = Vec::new();
         alice_alphas.push(Fr::from(ALICE_STARTING_POS as u32));
         for &val in alice_adjacents.iter() {
             alice_alphas.push(Fr::from(val as u32));
         }
         let alice_alphas_len = alice_alphas.len();
 
+        let mut bob_alphas = Vec::new();
         bob_alphas.push(Fr::from(BOB_STARTING_POS as u32));
         for &val in bob_adjacents.iter() {
             bob_alphas.push(Fr::from(val as u32));
         }
         let bob_alphas_len = bob_alphas.len();
 
-        // Commit to the full polynomial.
+        // This full alpha array represents the whole board, so we have an enumerating vec of 1 to BOARD_TILES
         let mut players_full_alphas = vec![Fr::from(0); BOARD_TILES];
         for i in 0..BOARD_TILES {
             players_full_alphas[i] = Fr::from(i as u32);
@@ -196,7 +213,7 @@ impl Game {
         let mut bob_full_betas = vec![Fr::from(0); BOARD_TILES];
         bob_full_betas[BOB_STARTING_POS] = Fr::from(1);
 
-        // Interpolate
+        // Generate commiting polynomial
         let alice_pol =
             lagrange_interpolation::<Bls12_381>(&players_full_alphas, &alice_full_betas).unwrap();
         let bob_pol =
@@ -206,11 +223,15 @@ impl Game {
         let alice_com = we.kem().kzg().commit(&alice_pol).unwrap();
         let bob_com = we.kem().kzg().commit(&bob_pol).unwrap();
 
-        // Somehow we should verify that alice is providing correct encryptions of her position and vice versa.
-        // Encrypt Alice and Bob's initial position using the opponent's commitment
+        // Important: We should verify that alice is providing correct encryptions of her position and vice versa somehow.
+
+        // Embed the player's position in the message
         let mut alice_message = Vec::from(MESSAGE);
         alice_message.push(ALICE_STARTING_POS as u8);
+        let mut bob_message = Vec::from(MESSAGE);
+        bob_message.push(BOB_STARTING_POS as u8);
 
+        // Encrypt the player's position using the opponent's commitment
         let alice_enc_pos = we
             .encrypt(
                 bob_com,
@@ -219,10 +240,6 @@ impl Game {
                 &alice_message,
             )
             .unwrap();
-
-        let mut bob_message = Vec::from(MESSAGE);
-        bob_message.push(BOB_STARTING_POS as u8);
-
         let bob_enc_pos = we
             .encrypt(
                 alice_com,
@@ -245,6 +262,7 @@ impl Game {
         }
     }
 
+    /// Game logic
     pub fn next(&mut self) -> () {
         if self.finished {
             return;
@@ -287,12 +305,10 @@ impl Game {
         } else {
             (&self.alice_enc_pos, self.bob_pos)
         };
+        let player_adjacents = Board::get_adjacent_positions(player_pos);
 
-        // Get alphas for the player's position
         println!("Decrypting opponent's position...");
         println!("Player's position: {}", player_pos);
-
-        let player_adjacents = Board::get_adjacent_positions(player_pos);
         println!("Player's adjacent positions: {:?}", player_adjacents);
 
         let mut player_full_alphas = vec![Fr::from(0); BOARD_TILES];
@@ -308,7 +324,7 @@ impl Game {
         let player_pol =
             lagrange_interpolation::<Bls12_381>(&player_full_alphas, &player_full_betas).unwrap();
 
-        // Generate a proof for the player's position
+        // Generate a single proof for the player's position
         let proof = self
             .we
             .kem()
