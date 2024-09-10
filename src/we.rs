@@ -17,15 +17,8 @@ pub struct WE<E: Pairing> {
 
 impl<E: Pairing> WE<E> {
     /// Create a new instance.
-    /// Receives the following parameters:
-    /// - `g1_gen`: G1 group generator.
-    /// - `g2_gen`: G2 group generator.
-    /// - `max_d`: Polynomial maximum degree.
-    /// - `secret`: KZG setup secret.
-    pub fn new(g1_gen: E::G1, g2_gen: E::G2, max_d: usize, secret: E::ScalarField) -> Self {
-        Self {
-            kzg: KZG::setup(g1_gen, g2_gen, max_d, secret),
-        }
+    pub fn new(kzg: KZG<E>) -> Self {
+        Self { kzg }
     }
 
     /// Encrypts a message for a commitment and a set of points and values.
@@ -128,7 +121,8 @@ mod tests {
         let secret = Fr::rand(rng);
         let max_degree = 10;
         let point: Fr = Fr::rand(rng);
-        let we: WE<Bls12_381> = WE::new(g1_gen, g2_gen, max_degree, secret);
+        let kzg = KZG::<Bls12_381>::setup(g1_gen, g2_gen, max_degree, secret);
+        let we: WE<Bls12_381> = WE::new(kzg);
 
         // p(x) = 7 x^4 + 9 x^3 - 5 x^2 - 25 x - 24
         let p = vec![
@@ -160,7 +154,8 @@ mod tests {
         let secret = Fr::rand(rng);
         let max_degree = 10;
         let point: Fr = Fr::rand(rng);
-        let we: WE<Bls12_381> = WE::new(g1_gen, g2_gen, max_degree, secret);
+        let kzg = KZG::<Bls12_381>::setup(g1_gen, g2_gen, max_degree, secret);
+        let we: WE<Bls12_381> = WE::new(kzg);
 
         // p(x) = 7 x^4 + 9 x^3 - 5 x^2 - 25 x - 24
         let p = vec![
@@ -191,7 +186,8 @@ mod tests {
         let g2_gen = G2Projective::rand(rng);
         let secret = Fr::rand(rng);
         let max_degree = 10;
-        let we: WE<Bls12_381> = WE::new(g1_gen, g2_gen, max_degree, secret);
+        let kzg = KZG::<Bls12_381>::setup(g1_gen, g2_gen, max_degree, secret);
+        let we: WE<Bls12_381> = WE::new(kzg);
 
         let p = vec![
             Fr::from(-24),
