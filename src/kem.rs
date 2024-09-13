@@ -76,7 +76,6 @@ pub fn decapsulate<E: Pairing>(proof: E::G1, ciphertext: E::G2) -> Result<Output
     Ok(key_hasher.finalize_xof())
 }
 
-/// TODO: Naive implementation. Will be updated with FK, an efficient method to compute multiple openings.
 /// Encapsulates a set of points and values for a commitment.
 /// Returns the keys and ciphertexts.
 pub fn encapsulate_set<E: Pairing>(

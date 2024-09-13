@@ -183,6 +183,11 @@ impl<E: Pairing> KZG<E> {
     pub fn tau_g2(&self) -> E::G2 {
         self.tau_g2
     }
+
+    /// Returns the maximum degree.
+    pub fn max_degree(&self) -> usize {
+        self.max_d
+    }
 }
 
 #[derive(Error, Debug)]
