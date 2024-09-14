@@ -13,8 +13,8 @@ use keaki::{
 pub const SUCCESSFUL_DECRYPTION_PAD: usize = 32;
 pub const SUCCESSFUL_DECRYPTION: &[u8] = &[0u8; SUCCESSFUL_DECRYPTION_PAD];
 
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
 /// Laconic OT Receiver struct.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct OTReceiver<E: Pairing> {
     we: WE<E>,
     selection: usize,
@@ -64,6 +64,7 @@ impl<E: Pairing> OTReceiver<E> {
     }
 }
 
+/// Laconic OT Sender struct.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct OTSender<E: Pairing> {
     we: WE<E>,

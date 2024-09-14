@@ -8,8 +8,8 @@ use ark_ff::{Field, Zero};
 use std::ops::Mul;
 use thiserror::Error;
 
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
 /// KZG polynomial commitment scheme.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct KZG<E: Pairing> {
     /// G1 generator
     g1_gen: E::G1,
