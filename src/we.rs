@@ -3,19 +3,23 @@
 //! This module contains the implementation of an Extractable Witness Encryption from an Extractable Witness KEM.'
 
 #![allow(clippy::type_complexity)]
-use crate::kem::{KEMError, KEM};
+use crate::{
+    kem::{self, KEMError},
+    kzg::KZG,
+};
 use ark_ec::pairing::Pairing;
 use thiserror::Error;
 
 /// Extractable Witness Encryption struct.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct WE<E: Pairing> {
-    kem: KEM<E>,
+    kzg: KZG<E>,
 }
 
 impl<E: Pairing> WE<E> {
     /// Create a new instance.
-    pub fn new(kem: KEM<E>) -> Self {
-        Self { kem }
+    pub fn new(kzg: KZG<E>) -> Self {
+        Self { kzg }
     }
 
     /// Encrypts a message for a commitment and a set of points and values.
@@ -50,7 +54,7 @@ impl<E: Pairing> WE<E> {
     ) -> Result<(E::G2, Vec<u8>), WEError> {
         // Generate a key and the corresponding key ciphertext
         // (ct_1, k) <- Encap(x)
-        let (key_ct, mut key_stream) = self.kem.encapsulate(com, point, value)?;
+        let (key_ct, mut key_stream) = kem::encapsulate(&self.kzg, com, point, value)?;
 
         // ct_2 <- Enc(k, m)
         let mut msg_ct = vec![0u8; msg.len()];
@@ -72,7 +76,7 @@ impl<E: Pairing> WE<E> {
         msg_ct: &[u8],
     ) -> Result<Vec<u8>, WEError> {
         // k = Decap(w, ct_1)
-        let mut key_stream = self.kem.decapsulate(proof, key_ct)?;
+        let mut key_stream = kem::decapsulate::<E>(proof, key_ct)?;
 
         // m = Dec(k, ct_2)
         let mut msg = vec![0u8; msg_ct.len()];
@@ -82,6 +86,11 @@ impl<E: Pairing> WE<E> {
         }
 
         Ok(msg)
+    }
+
+    /// Returns the KZG instance.
+    pub fn kzg(&self) -> &KZG<E> {
+        &self.kzg
     }
 }
 
@@ -100,7 +109,6 @@ impl From<KEMError> for WEError {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::kzg::KZG;
     use crate::pol_op::evaluate_polynomial;
     use ark_bls12_381::{Bls12_381, Fr, G1Projective, G2Projective};
     use ark_std::test_rng;
@@ -114,9 +122,8 @@ mod tests {
         let secret = Fr::rand(rng);
         let max_degree = 10;
         let point: Fr = Fr::rand(rng);
-        let kzg: KZG<Bls12_381> = KZG::setup(g1_gen, g2_gen, max_degree, secret);
-        let kem: KEM<Bls12_381> = KEM::new(kzg);
-        let we: WE<Bls12_381> = WE::new(kem);
+        let kzg = KZG::<Bls12_381>::setup(g1_gen, g2_gen, max_degree, secret);
+        let we: WE<Bls12_381> = WE::new(kzg);
 
         // p(x) = 7 x^4 + 9 x^3 - 5 x^2 - 25 x - 24
         let p = vec![
@@ -127,13 +134,13 @@ mod tests {
             Fr::from(7),
         ];
         let val = evaluate_polynomial::<Bls12_381>(&p, &point);
-        let commitment = we.kem.kzg().commit(&p).unwrap();
+        let commitment = we.kzg().commit(&p).unwrap();
 
         let msg = b"helloworld";
 
         let (key_ct, msg_ct) = we.encrypt_single(commitment, point, val, msg).unwrap();
 
-        let proof = we.kem.kzg().open(&p, &point).unwrap();
+        let proof = we.kzg().open(&p, &point).unwrap();
 
         let decrypted_msg = we.decrypt_single(proof, key_ct, &msg_ct).unwrap();
 
@@ -148,9 +155,8 @@ mod tests {
         let secret = Fr::rand(rng);
         let max_degree = 10;
         let point: Fr = Fr::rand(rng);
-        let kzg: KZG<Bls12_381> = KZG::setup(g1_gen, g2_gen, max_degree, secret);
-        let kem: KEM<Bls12_381> = KEM::new(kzg);
-        let we: WE<Bls12_381> = WE::new(kem);
+        let kzg = KZG::<Bls12_381>::setup(g1_gen, g2_gen, max_degree, secret);
+        let we: WE<Bls12_381> = WE::new(kzg);
 
         // p(x) = 7 x^4 + 9 x^3 - 5 x^2 - 25 x - 24
         let p = vec![
@@ -161,13 +167,13 @@ mod tests {
             Fr::from(7),
         ];
         let val = evaluate_polynomial::<Bls12_381>(&p, &point);
-        let commitment = we.kem.kzg().commit(&p).unwrap();
+        let commitment = we.kzg().commit(&p).unwrap();
 
         let msg = b"helloworld";
         let (key_ct, msg_ct) = we.encrypt_single(commitment, point, val, msg).unwrap();
 
         let wrong_point: Fr = Fr::rand(rng);
-        let invalid_proof = we.kem.kzg().open(&p, &wrong_point).unwrap();
+        let invalid_proof = we.kzg().open(&p, &wrong_point).unwrap();
 
         let decrypted_msg = we.decrypt_single(invalid_proof, key_ct, &msg_ct).unwrap();
 
@@ -181,9 +187,8 @@ mod tests {
         let g2_gen = G2Projective::rand(rng);
         let secret = Fr::rand(rng);
         let max_degree = 10;
-        let kzg: KZG<Bls12_381> = KZG::setup(g1_gen, g2_gen, max_degree, secret);
-        let kem: KEM<Bls12_381> = KEM::new(kzg);
-        let we: WE<Bls12_381> = WE::new(kem);
+        let kzg = KZG::<Bls12_381>::setup(g1_gen, g2_gen, max_degree, secret);
+        let we: WE<Bls12_381> = WE::new(kzg);
 
         let p = vec![
             Fr::from(-24),
@@ -197,7 +202,7 @@ mod tests {
             .iter()
             .map(|&point| evaluate_polynomial::<Bls12_381>(&p, &point))
             .collect();
-        let commitment = we.kem.kzg().commit(&p).unwrap();
+        let commitment = we.kzg().commit(&p).unwrap();
 
         let msg = b"helloworld";
 
@@ -206,7 +211,7 @@ mod tests {
             .unwrap();
 
         let target_index = 1;
-        let proof = we.kem.kzg().open(&p, &points[target_index]).unwrap();
+        let proof = we.kzg().open(&p, &points[target_index]).unwrap();
 
         let (correct_key_ct, correct_msg_ct) = &cts[target_index];
         let decrypted_msg = we

@@ -9,6 +9,7 @@ use std::ops::Mul;
 use thiserror::Error;
 
 /// KZG polynomial commitment scheme.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct KZG<E: Pairing> {
     /// G1 generator
     g1_gen: E::G1,
@@ -174,9 +175,19 @@ impl<E: Pairing> KZG<E> {
         self.g2_gen
     }
 
+    /// Returns the powers of tau in G1.
+    pub fn g1_pow(&self) -> &[E::G1] {
+        &self.g1_pow
+    }
+
     /// Returns the tau in G2.
     pub fn tau_g2(&self) -> E::G2 {
         self.tau_g2
+    }
+
+    /// Returns the maximum degree.
+    pub fn max_degree(&self) -> usize {
+        self.max_d
     }
 }
 
