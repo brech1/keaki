@@ -10,6 +10,7 @@ use crate::{
 use ark_ec::pairing::Pairing;
 use thiserror::Error;
 
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 /// Extractable Witness Encryption struct.
 pub struct WE<E: Pairing> {
     kzg: KZG<E>,

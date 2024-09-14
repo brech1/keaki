@@ -5,7 +5,7 @@
 use ark_ec::pairing::Pairing;
 use ark_ff::Field;
 use keaki::{
-    kzg::{KZGError, KZG},
+    kzg::KZGError,
     pol_op::evaluate_polynomial,
     we::{WEError, WE},
 };
@@ -13,65 +13,50 @@ use keaki::{
 pub const SUCCESSFUL_DECRYPTION_PAD: usize = 32;
 pub const SUCCESSFUL_DECRYPTION: &[u8] = &[0u8; SUCCESSFUL_DECRYPTION_PAD];
 
-pub struct LaconicOT<E: Pairing> {
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+/// Laconic OT Receiver struct.
+pub struct OTReceiver<E: Pairing> {
     we: WE<E>,
+    selection: usize,
 }
 
-impl<E: Pairing> LaconicOT<E> {
-    pub fn new(we: WE<E>) -> Self {
-        Self { we }
+impl<E: Pairing> OTReceiver<E> {
+    /// Creates a new instance.
+    pub fn new(we: WE<E>, selection: usize) -> Self {
+        Self { we, selection }
     }
 
-    pub fn we(&self) -> &WE<E> {
-        &self.we
-    }
-}
-
-pub trait Receiver<E: Pairing> {
     /// Commits to a selection polynomial.
-    /// - `kzg`: the KZG instance.
-    /// - `selection`: the selection index.
-    fn commit(&self, kzg: &KZG<E>, selection: usize) -> Result<E::G1, KZGError> {
-        let max_degree = kzg.max_degree();
-        let mut selection_polynomial = vec![E::ScalarField::ZERO; max_degree];
-        selection_polynomial[selection] = E::ScalarField::ONE;
+    pub fn commit(&self) -> Result<E::G1, KZGError> {
+        let selection_polynomial =
+            get_selection_polynomial::<E>(self.selection, self.we.kzg().max_degree());
 
-        kzg.commit(&selection_polynomial)
-    }
-
-    /// Generates a proof for a given point.
-    /// - `kzg`: the KZG instance.
-    /// - `selection`: the selection index.
-    fn generate_proof(&self, kzg: &KZG<E>, selection: usize) -> Result<E::G1, KZGError> {
-        let max_degree = kzg.max_degree();
-        let mut selection_polynomial = vec![E::ScalarField::ZERO; max_degree];
-        selection_polynomial[selection] = E::ScalarField::ONE;
-
-        kzg.open(
-            &selection_polynomial,
-            &E::ScalarField::from(selection as u64),
-        )
+        self.we.kzg().commit(&selection_polynomial)
     }
 
     /// Decrypts the sender's set of ciphertexts.
-    /// - `we`: the WE instance.
-    /// - `kzg`: the KZG instance.
-    /// - `selection`: the selection index.
-    /// - `encrypted_messages`: the sender's set of ciphertexts.
-    fn decrypt(
+    pub fn decrypt(
         &self,
-        we: &WE<E>,
-        selection: usize,
         encrypted_messages: Vec<(E::G2, Vec<u8>)>,
     ) -> Result<Vec<Vec<u8>>, WEError> {
-        let proof = self.generate_proof(we.kzg(), selection).unwrap();
+        let selection_polynomial =
+            get_selection_polynomial::<E>(self.selection, self.we.kzg().max_degree());
+
+        // Generate proof
+        let proof = self
+            .we
+            .kzg()
+            .open(
+                &selection_polynomial,
+                &E::ScalarField::from(self.selection as u64),
+            )
+            .unwrap();
 
         let mut decrypted_messages = Vec::new();
-
         for encrypted_message in encrypted_messages {
             let (key_ct, msg_ct) = encrypted_message;
 
-            let decrypted_msg = we.decrypt_single(proof, key_ct, &msg_ct)?;
+            let decrypted_msg = self.we.decrypt_single(proof, key_ct, &msg_ct)?;
             decrypted_messages.push(decrypted_msg);
         }
 
@@ -79,14 +64,22 @@ pub trait Receiver<E: Pairing> {
     }
 }
 
-pub trait Sender<E: Pairing> {
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct OTSender<E: Pairing> {
+    we: WE<E>,
+}
+
+impl<E: Pairing> OTSender<E> {
+    /// Creates a new instance.
+    pub fn new(we: WE<E>) -> Self {
+        Self { we }
+    }
+
     /// Encrypts a set of values for a given commitment.
-    /// - `we`: the WE instance.
     /// - `values`: the list of values.
     /// - `commitment`: the commitment to the selection polynomial.
     fn encrypt(
         &self,
-        we: &WE<E>,
         values: &[&[u8]],
         commitment: E::G1,
     ) -> Result<Vec<(E::G2, Vec<u8>)>, WEError> {
@@ -98,17 +91,17 @@ pub trait Sender<E: Pairing> {
             message.extend(value);
 
             // Evaluate the polynomial
-            let mut selection_polynomial = vec![E::ScalarField::ZERO; we.kzg().max_degree()];
-            selection_polynomial[index] = E::ScalarField::ONE;
-            let value = evaluate_polynomial::<E>(
+            let selection_polynomial =
+                get_selection_polynomial::<E>(index, self.we.kzg().max_degree());
+            let evaluation = evaluate_polynomial::<E>(
                 &selection_polynomial,
                 &E::ScalarField::from(index as u64),
             );
 
-            let enc_message = we.encrypt_single(
+            let enc_message = self.we.encrypt_single(
                 commitment,
                 E::ScalarField::from(index as u64),
-                value,
+                evaluation,
                 &message,
             )?;
 
@@ -117,6 +110,16 @@ pub trait Sender<E: Pairing> {
 
         Ok(encrypted_messages)
     }
+}
+
+/// Generates a selection polynomial from a selection and a max degree.
+fn get_selection_polynomial<E: Pairing>(
+    selection: usize,
+    max_degree: usize,
+) -> Vec<E::ScalarField> {
+    let mut selection_polynomial = vec![E::ScalarField::ZERO; max_degree];
+    selection_polynomial[selection] = E::ScalarField::ONE;
+    selection_polynomial
 }
 
 #[cfg(test)]
@@ -148,25 +151,23 @@ mod laconic_ot_tests {
         let rng = &mut test_rng();
         let kzg = setup_kzg();
         let we: WE<Bls12_381> = WE::new(kzg);
-        let laconic_ot = LaconicOT::new(we);
 
         // --------------------
         // ----- Receiver -----
         // --------------------
 
-        // Implement the Receiver trait
-        impl<E: Pairing> Receiver<E> for LaconicOT<E> {}
-
-        // Receiver makes a random selection and commits to it
+        // Make a random selection
         let selection: usize = rng.gen_range(0..MAX_DEGREE);
-        let commitment = laconic_ot.commit(laconic_ot.we().kzg(), selection).unwrap();
+
+        // Instantiate the Receiver
+        let receiver = OTReceiver::new(we.clone(), selection);
+
+        // Commit
+        let commitment = receiver.commit().unwrap();
 
         // --------------------
         // ------ Sender ------
         // --------------------
-
-        // Implement the Sender trait
-        impl<E: Pairing> Sender<E> for LaconicOT<E> {}
 
         // Generate 4 random values
         const VALUE_LENGTH: usize = 32;
@@ -184,19 +185,18 @@ mod laconic_ot_tests {
             values.push(value.leak());
         }
 
-        // Sender encrypts the values
-        let encrypted_messages = laconic_ot
-            .encrypt(laconic_ot.we(), &values, commitment)
-            .unwrap();
+        // Instantiate the Sender
+        let sender = OTSender::new(we.clone());
+
+        // Encrypt
+        let encrypted_messages = sender.encrypt(&values, commitment).unwrap();
 
         // --------------------
         // ----- Receiver -----
         // --------------------
 
-        // Receiver decrypts the messages
-        let decrypted_messages = laconic_ot
-            .decrypt(laconic_ot.we(), selection, encrypted_messages)
-            .unwrap();
+        // Decrypt
+        let decrypted_messages = receiver.decrypt(encrypted_messages).unwrap();
 
         let mut decrypted_values = Vec::new();
         for message in decrypted_messages {
