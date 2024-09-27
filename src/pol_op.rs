@@ -1,4 +1,4 @@
-//! # Polynomial Operations Module
+//! # Polynomial Operations
 //!
 //! This module contains functions to perform operations on polynomials.
 

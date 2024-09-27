@@ -1,4 +1,4 @@
-//! # Key Encapsulation Module
+//! # Key Encapsulation Mechanism
 //!
 //! This module implements the **Extractable Witness Key Encapsulation Mechanism** functions.
 
