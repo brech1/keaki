@@ -1,6 +1,6 @@
 //! # Polynomial Operations
 //!
-//! This module contains functions to perform operations on polynomials.
+//! This module contains functions to perform polynomial operations.
 
 use ark_ec::pairing::Pairing;
 use ark_ff::{Field, One, Zero};

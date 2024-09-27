@@ -1,4 +1,4 @@
-//! # KZG Scheme
+//! # `KZG Polynomial Commitment Scheme`
 //!
 //! This module contains the implementation of the KZG polynomial commitment scheme.
 

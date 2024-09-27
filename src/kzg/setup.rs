@@ -343,24 +343,22 @@ pub fn verify_metadata(file_data: &[u8]) -> Result<(), TrustedSetupError> {
 
 #[derive(Debug, Error, PartialEq, Eq)]
 pub enum TrustedSetupError {
-    #[error("Error")]
-    Error,
-    #[error("IO error: {0}")]
-    ParseError(String),
-    #[error("Metadata parsing error: {0}")]
-    Metadata(String),
+    #[error("Element size mismatch. Obtained: {0:?}, Expected: {1:?}")]
+    ElementSizeMismatch(u64, u64),
+    #[error("Section is uninitialized: {0}")]
+    EmptySection(u8),
+    #[error("Field modulus mismatch. Obtained: {0:?}, Expected: {1:?}")]
+    FieldModulusMismatch(Vec<u8>, Vec<u8>),
     #[error("Invalid file type: {0:?}")]
     InvalidFileType([u8; 4]),
     #[error("Invalid number of sections: {0:?}")]
     InvalidNumberOfSections(u32),
-    #[error("Section is uninitialized: {0}")]
-    EmptySection(u8),
+    #[error("Metadata parsing error: {0}")]
+    Metadata(String),
+    #[error("IO error: {0}")]
+    ParseError(String),
     #[error("Unknown section ID: {0}")]
     UnknownSection(u8),
-    #[error("Field modulus mismatch. Obtained: {0:?}, Expected: {1:?}")]
-    FieldModulusMismatch(Vec<u8>, Vec<u8>),
-    #[error("Element size mismatch. Obtained: {0:?}, Expected: {1:?}")]
-    ElementSizeMismatch(u64, u64),
 }
 
 #[cfg(test)]
