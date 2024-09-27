@@ -137,7 +137,7 @@ impl FileSections {
 
             *section = SectionInfo::new_from_data(section_header_data, offset)?;
 
-            offset += SECTION_HEADER_LEN;
+            offset += SECTION_HEADER_LEN + section.size as usize;
         }
 
         Ok(Self { sections })
@@ -385,19 +385,19 @@ mod tests {
         assert!(SectionId::try_from(99).is_err());
     }
 
-    // #[test]
-    // fn test_file_sections() {
-    //     let loader = FileLoader::new(PathBuf::from(TEST_PTAU_FILEPATH));
-    //     let file_data = loader.load().expect("Failed to load the test ptau file");
+    #[test]
+    fn test_file_sections() {
+        let loader = FileLoader::new(PathBuf::from(TEST_PTAU_FILEPATH));
+        let file_data = loader.load().expect("Failed to load the test ptau file");
 
-    //     verify_metadata(&file_data).expect("Metadata verification failed");
+        verify_metadata(&file_data).expect("Metadata verification failed");
 
-    //     let sections = FileSections::parse(&file_data).expect("Failed to parse file sections");
+        let sections = FileSections::parse(&file_data).expect("Failed to parse file sections");
 
-    //     let header_section = sections
-    //         .get(SectionId::Header)
-    //         .expect("Header section missing");
+        let header_section = sections
+            .get(SectionId::Header)
+            .expect("Header section missing");
 
-    //     assert_eq!(header_section.id, SectionId::Header);
-    // }
+        assert_eq!(header_section.id, SectionId::Header);
+    }
 }
