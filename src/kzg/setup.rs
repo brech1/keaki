@@ -5,11 +5,10 @@
 //! The only supported format is the Snark JS `ptau` trusted setup file format.
 
 use ark_ec::{pairing::Pairing, AffineRepr};
-use ark_ff::{BigInteger, PrimeField};
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize, Compress};
 use std::{
     fs::File,
-    io::{self, Read},
+    io::{self, Cursor, Read},
     path::PathBuf,
 };
 use thiserror::Error;
@@ -131,7 +130,7 @@ impl FileSections {
         let mut sections = [SectionInfo::default(); N_SECTIONS];
         let mut offset = METADATA_LEN;
 
-        for section in sections.iter_mut().take(N_SECTIONS) {
+        for section in sections.iter_mut() {
             let mut section_header_data = [0u8; SECTION_HEADER_LEN];
             section_header_data.copy_from_slice(&file_data[offset..offset + SECTION_HEADER_LEN]);
 
@@ -183,45 +182,29 @@ impl SectionInfo {
 
 /// Header Section
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct HeaderSection<E: Pairing> {
-    /// Curve Field Size
-    field_size: u32,
+pub struct HeaderSection {
     /// Curve Field Modulus
-    field_modulus: <E::BaseField as PrimeField>::BigInt,
+    field_modulus: Vec<u8>,
     /// Power of the current setup file
     power: u32,
     /// Full ceremony power
     ceremony_power: u32,
 }
 
-impl<E: Pairing> HeaderSection<E> {
+impl HeaderSection {
     pub fn parse(file_data: &[u8], sections: &FileSections) -> Result<Self, TrustedSetupError> {
-        let header_info = sections.get(SectionId::Header)?;
-        let mut offset = header_info.position;
+        let section_info = sections.get(SectionId::Header)?;
+        let mut offset = section_info.position;
 
-        let mut field_size = [0u8; 4];
-        field_size.copy_from_slice(&file_data[offset..offset + 4]);
-        let field_size = u32::from_le_bytes(field_size);
+        // Get the byte length of the field modulus data
+        let mut field_mod_size = [0u8; 4];
+        field_mod_size.copy_from_slice(&file_data[offset..offset + 4]);
+        let field_mod_size = u32::from_le_bytes(field_mod_size);
         offset += 4;
 
-        // Get expected modulus size, rounded up
-        let modulus_size = ((E::BaseField::MODULUS_BIT_SIZE + 7) / 8) as usize;
-
-        // Get modulus bytes
-        let modulus_bytes = &file_data[offset..(offset + modulus_size)];
-        offset += modulus_size;
-
-        // Get selected curve modulus
-        let curve_mod = E::BaseField::MODULUS;
-        let curve_mod_bytes = curve_mod.to_bytes_le();
-
-        // Check that the obtained modulus is equal to the selected curve modulus
-        if modulus_bytes != curve_mod_bytes {
-            return Err(TrustedSetupError::FieldModulusMismatch(
-                modulus_bytes.to_vec(),
-                curve_mod_bytes,
-            ));
-        }
+        // Read the field modulus
+        let field_modulus = file_data[offset..(offset + field_mod_size as usize)].to_vec();
+        offset += field_mod_size as usize;
 
         let mut power = [0u8; 4];
         power.copy_from_slice(&file_data[offset..offset + 4]);
@@ -233,8 +216,7 @@ impl<E: Pairing> HeaderSection<E> {
         let ceremony_power = u32::from_le_bytes(ceremony_power);
 
         Ok(Self {
-            field_size,
-            field_modulus: curve_mod,
+            field_modulus,
             power,
             ceremony_power,
         })
@@ -252,31 +234,37 @@ impl<E: Pairing> TauG1Section<E> {
     pub fn parse(
         file_data: &[u8],
         sections: &FileSections,
-        ceremony_power: u32,
+        power: u32,
     ) -> Result<Self, TrustedSetupError> {
-        let header_info = sections.get(SectionId::TauG1)?;
+        let section_info = sections.get(SectionId::TauG1)?;
 
         // Number of elements
-        let n_elements = (2u32.pow(ceremony_power)) * 2 - 1;
+        let n_elements = (2u32.pow(power)) * 2 - 1;
 
         // Element size
         let element_size = E::G1Affine::generator().serialized_size(Compress::No);
 
         // Validate element size
-        if element_size != (header_info.size as usize / n_elements as usize) {
-            return Err(TrustedSetupError::ElementSizeMismatch);
+        if section_info.size != element_size as u64 * n_elements as u64 {
+            return Err(TrustedSetupError::ElementSizeMismatch(
+                element_size as u64 * n_elements as u64,
+                section_info.size,
+            ));
         }
 
-        // Deserialize each G1 element
+        // Deserialize
         let mut powers: Vec<<E as Pairing>::G1> = Vec::new();
-        let mut offset = header_info.position;
-        for _ in 0..n_elements {
-            let element =
-                E::G1Affine::deserialize_uncompressed(&file_data[offset..offset + element_size])
-                    .map_err(|e| TrustedSetupError::ParseError(e.to_string()))?;
+        for chunk in file_data
+            [section_info.position..section_info.position + section_info.size as usize]
+            .chunks_exact(element_size)
+            .take(n_elements as usize)
+        {
+            let mut reader = Cursor::new(chunk);
+
+            let element = E::G1Affine::deserialize_uncompressed_unchecked(&mut reader)
+                .map_err(|e| TrustedSetupError::ParseError(e.to_string()))?;
 
             powers.push(element.into());
-            offset += element_size;
         }
 
         Ok(Self { powers })
@@ -294,31 +282,37 @@ impl<E: Pairing> TauG2Section<E> {
     pub fn parse(
         file_data: &[u8],
         sections: &FileSections,
-        ceremony_power: u32,
+        power: u32,
     ) -> Result<Self, TrustedSetupError> {
-        let header_info = sections.get(SectionId::TauG2)?;
+        let section_info = sections.get(SectionId::TauG2)?;
 
         // Number of elements
-        let n_elements = 2u32.pow(ceremony_power);
+        let n_elements = 2u32.pow(power);
 
         // Element size
         let element_size = E::G2Affine::generator().serialized_size(Compress::No);
 
         // Validate element size
-        if element_size != (header_info.size as usize / n_elements as usize) {
-            return Err(TrustedSetupError::ElementSizeMismatch);
+        if section_info.size != element_size as u64 * n_elements as u64 {
+            return Err(TrustedSetupError::ElementSizeMismatch(
+                element_size as u64 * n_elements as u64,
+                section_info.size,
+            ));
         }
 
-        // Deserialize each G1 element
+        // Deserialize
         let mut powers: Vec<<E as Pairing>::G2> = Vec::new();
-        let mut offset = header_info.position;
-        for _ in 0..n_elements {
-            let element =
-                E::G2Affine::deserialize_uncompressed(&file_data[offset..offset + element_size])
-                    .map_err(|e| TrustedSetupError::ParseError(e.to_string()))?;
+        for chunk in file_data
+            [section_info.position..section_info.position + section_info.size as usize]
+            .chunks_exact(element_size)
+            .take(n_elements as usize)
+        {
+            let mut reader = Cursor::new(chunk);
+
+            let element = E::G2Affine::deserialize_uncompressed_unchecked(&mut reader)
+                .map_err(|e| TrustedSetupError::ParseError(e.to_string()))?;
 
             powers.push(element.into());
-            offset += element_size;
         }
 
         Ok(Self { powers })
@@ -365,20 +359,27 @@ pub enum TrustedSetupError {
     UnknownSection(u8),
     #[error("Field modulus mismatch. Obtained: {0:?}, Expected: {1:?}")]
     FieldModulusMismatch(Vec<u8>, Vec<u8>),
-    #[error("Element size mismatch")]
-    ElementSizeMismatch,
+    #[error("Element size mismatch. Obtained: {0:?}, Expected: {1:?}")]
+    ElementSizeMismatch(u64, u64),
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ark_bls12_381::Bls12_381;
     use ark_bn254::Bn254;
+    use ark_ec::bn::Bn;
+    use ark_ff::{BigInt, BigInteger, PrimeField};
 
     pub const TEST_PTAU_FILEPATH: &str = "ptau/ppot_0080_01.ptau.test";
+    pub const TEST_FILE_LEN: usize = 95_634;
+
+    pub const TEST_CEREMONY_POWER: u32 = 28;
+    pub const TEST_FILE_POWER: u32 = 1;
+
+    pub const BN254_FIELD_MOD: BigInt<4> = <Bn<ark_bn254::Config> as Pairing>::BaseField::MODULUS;
 
     #[test]
-    fn test_section_id_parsing() {
+    fn test_section_id() {
         assert_eq!(SectionId::try_from(1), Ok(SectionId::Header));
         assert_eq!(SectionId::try_from(2), Ok(SectionId::TauG1));
         assert_eq!(SectionId::try_from(3), Ok(SectionId::TauG2));
@@ -386,18 +387,110 @@ mod tests {
     }
 
     #[test]
-    fn test_file_sections() {
+    fn test_file_loader() {
         let loader = FileLoader::new(PathBuf::from(TEST_PTAU_FILEPATH));
         let file_data = loader.load().expect("Failed to load the test ptau file");
 
-        verify_metadata(&file_data).expect("Metadata verification failed");
+        assert_eq!(file_data.len(), TEST_FILE_LEN);
+    }
 
-        let sections = FileSections::parse(&file_data).expect("Failed to parse file sections");
+    #[test]
+    fn test_verify_metadata() {
+        let loader = FileLoader::new(PathBuf::from(TEST_PTAU_FILEPATH));
+        let file_data = loader.load().expect("Failed to load the test ptau file");
 
-        let header_section = sections
-            .get(SectionId::Header)
-            .expect("Header section missing");
+        assert_eq!(verify_metadata(&file_data), Ok(()));
+    }
 
-        assert_eq!(header_section.id, SectionId::Header);
+    #[test]
+    fn test_section_info() {
+        let test_section_data = [1, 0, 0, 0, 44, 0, 0, 0, 0, 0, 0, 0];
+        let section_info = SectionInfo::new_from_data(test_section_data, 0).unwrap();
+
+        assert_eq!(section_info.id, SectionId::Header);
+        assert_eq!(section_info.size, 44);
+        assert_eq!(section_info.position, SECTION_HEADER_LEN);
+    }
+
+    #[test]
+    fn test_file_sections() {
+        let loader = FileLoader::new(PathBuf::from(TEST_PTAU_FILEPATH));
+        let file_data = loader.load().unwrap();
+        let sections = FileSections::parse(&file_data).unwrap();
+
+        for i in 0..N_SECTIONS {
+            let section = sections.sections[i];
+
+            // Assert the section index
+            let expected_section_index = section.id.section_index();
+            assert_eq!(i, expected_section_index);
+
+            assert!(section.size > 0);
+            assert!(section.position + section.size as usize <= file_data.len());
+        }
+
+        // Assert the section sizes and positions
+        for i in 0..N_SECTIONS - 1 {
+            let current_section = sections.sections[i];
+            let next_section = sections.sections[i + 1];
+
+            // For the header, the position should be METADATA_LEN + SECTION_HEADER_LEN
+            if i == 0 {
+                assert_eq!(current_section.position, METADATA_LEN + SECTION_HEADER_LEN);
+            }
+
+            assert_eq!(
+                current_section.position + current_section.size as usize + SECTION_HEADER_LEN,
+                next_section.position
+            );
+        }
+    }
+
+    #[test]
+    fn test_header_section() {
+        let loader = FileLoader::new(PathBuf::from(TEST_PTAU_FILEPATH));
+        let file_data = loader.load().unwrap();
+        let sections = FileSections::parse(&file_data).unwrap();
+
+        let header_section = HeaderSection::parse(&file_data, &sections).unwrap();
+
+        assert_eq!(
+            header_section.field_modulus,
+            BN254_FIELD_MOD.to_bytes_le().to_vec()
+        );
+        assert_eq!(header_section.power, TEST_FILE_POWER);
+        assert_eq!(header_section.ceremony_power, TEST_CEREMONY_POWER);
+    }
+
+    #[test]
+    fn test_tau_g1_section() {
+        let loader = FileLoader::new(PathBuf::from(TEST_PTAU_FILEPATH));
+        let file_data = loader.load().unwrap();
+        let sections = FileSections::parse(&file_data).unwrap();
+        let header_section = HeaderSection::parse(&file_data, &sections).unwrap();
+
+        let tau_g1_section =
+            TauG1Section::<Bn254>::parse(&file_data, &sections, header_section.power).unwrap();
+
+        assert_eq!(
+            tau_g1_section.powers.len(),
+            2u32.pow(TEST_FILE_POWER) as usize * 2 - 1
+        );
+    }
+
+    #[test]
+    fn test_tau_g2_section() {
+        let loader = FileLoader::new(PathBuf::from(TEST_PTAU_FILEPATH));
+        let file_data = loader.load().unwrap();
+        let sections = FileSections::parse(&file_data).unwrap();
+        let header_section = HeaderSection::parse(&file_data, &sections).unwrap();
+
+        let tau_g2_section =
+            TauG2Section::<Bn254>::parse(&file_data, &sections, header_section.power).unwrap();
+
+        assert_eq!(
+            tau_g2_section.powers.len(),
+            2u32.pow(TEST_FILE_POWER) as usize
+        );
     }
 }
