@@ -1,4 +1,4 @@
-//! # Trusted Setup
+//! # Trusted Setup File Parser
 //!
 //! This module provides the functionality to obtain the necessary data for initializing a KZG commitment scheme from a trusted setup output file.
 //!
@@ -72,7 +72,7 @@ impl SectionId {
 }
 
 impl TryFrom<u8> for SectionId {
-    type Error = TrustedSetupError;
+    type Error = SetupFileError;
 
     fn try_from(value: u8) -> Result<Self, Self::Error> {
         match value {
@@ -87,7 +87,7 @@ impl TryFrom<u8> for SectionId {
             13 => Ok(SectionId::LagrangeG2),
             14 => Ok(SectionId::LagrangeAlphaTauG1),
             15 => Ok(SectionId::LagrangeBetaTauG1),
-            _ => Err(TrustedSetupError::UnknownSection(value)),
+            _ => Err(SetupFileError::UnknownSection(value)),
         }
     }
 }
@@ -126,7 +126,7 @@ pub struct FileSections {
 
 impl FileSections {
     /// Parse the sections from the file data.
-    pub fn parse(file_data: &[u8]) -> Result<Self, TrustedSetupError> {
+    pub fn parse(file_data: &[u8]) -> Result<Self, SetupFileError> {
         let mut sections = [SectionInfo::default(); N_SECTIONS];
         let mut offset = METADATA_LEN;
 
@@ -143,10 +143,10 @@ impl FileSections {
     }
 
     /// Returns the section information.
-    pub fn get(&self, id: SectionId) -> Result<&SectionInfo, TrustedSetupError> {
+    pub fn get(&self, id: SectionId) -> Result<&SectionInfo, SetupFileError> {
         self.sections
             .get(id.section_index())
-            .ok_or(TrustedSetupError::EmptySection(id as u8))
+            .ok_or(SetupFileError::EmptySection(id as u8))
     }
 }
 
@@ -166,7 +166,7 @@ impl SectionInfo {
     pub fn new_from_data(
         data: [u8; SECTION_HEADER_LEN],
         offset: usize,
-    ) -> Result<Self, TrustedSetupError> {
+    ) -> Result<Self, SetupFileError> {
         // The first four bytes are the section ID, but one is enough.
         let id = SectionId::try_from(data[0])?;
 
@@ -192,7 +192,7 @@ pub struct HeaderSection {
 }
 
 impl HeaderSection {
-    pub fn parse(file_data: &[u8], sections: &FileSections) -> Result<Self, TrustedSetupError> {
+    pub fn parse(file_data: &[u8], sections: &FileSections) -> Result<Self, SetupFileError> {
         let section_info = sections.get(SectionId::Header)?;
         let mut offset = section_info.position;
 
@@ -235,7 +235,7 @@ impl<E: Pairing> TauG1Section<E> {
         file_data: &[u8],
         sections: &FileSections,
         power: u32,
-    ) -> Result<Self, TrustedSetupError> {
+    ) -> Result<Self, SetupFileError> {
         let section_info = sections.get(SectionId::TauG1)?;
 
         // Number of elements
@@ -246,7 +246,7 @@ impl<E: Pairing> TauG1Section<E> {
 
         // Validate element size
         if section_info.size != element_size as u64 * n_elements as u64 {
-            return Err(TrustedSetupError::ElementSizeMismatch(
+            return Err(SetupFileError::ElementSizeMismatch(
                 element_size as u64 * n_elements as u64,
                 section_info.size,
             ));
@@ -262,7 +262,7 @@ impl<E: Pairing> TauG1Section<E> {
             let mut reader = Cursor::new(chunk);
 
             let element = E::G1Affine::deserialize_uncompressed_unchecked(&mut reader)
-                .map_err(|e| TrustedSetupError::ParseError(e.to_string()))?;
+                .map_err(|e| SetupFileError::ParseError(e.to_string()))?;
 
             powers.push(element.into());
         }
@@ -283,7 +283,7 @@ impl<E: Pairing> TauG2Section<E> {
         file_data: &[u8],
         sections: &FileSections,
         power: u32,
-    ) -> Result<Self, TrustedSetupError> {
+    ) -> Result<Self, SetupFileError> {
         let section_info = sections.get(SectionId::TauG2)?;
 
         // Number of elements
@@ -294,7 +294,7 @@ impl<E: Pairing> TauG2Section<E> {
 
         // Validate element size
         if section_info.size != element_size as u64 * n_elements as u64 {
-            return Err(TrustedSetupError::ElementSizeMismatch(
+            return Err(SetupFileError::ElementSizeMismatch(
                 element_size as u64 * n_elements as u64,
                 section_info.size,
             ));
@@ -310,7 +310,7 @@ impl<E: Pairing> TauG2Section<E> {
             let mut reader = Cursor::new(chunk);
 
             let element = E::G2Affine::deserialize_uncompressed_unchecked(&mut reader)
-                .map_err(|e| TrustedSetupError::ParseError(e.to_string()))?;
+                .map_err(|e| SetupFileError::ParseError(e.to_string()))?;
 
             powers.push(element.into());
         }
@@ -320,12 +320,12 @@ impl<E: Pairing> TauG2Section<E> {
 }
 
 /// Verifies file metadata.
-pub fn verify_metadata(file_data: &[u8]) -> Result<(), TrustedSetupError> {
+pub fn verify_metadata(file_data: &[u8]) -> Result<(), SetupFileError> {
     let mut file_type = [0u8; 4];
     file_type.copy_from_slice(&file_data[0..4]);
 
     if file_type != *FILE_TYPE {
-        return Err(TrustedSetupError::InvalidFileType(file_type));
+        return Err(SetupFileError::InvalidFileType(file_type));
     }
 
     // Version number occupies bytes 4 through 8
@@ -335,14 +335,14 @@ pub fn verify_metadata(file_data: &[u8]) -> Result<(), TrustedSetupError> {
     let n_sections = u32::from_le_bytes(n_sections);
 
     if n_sections != N_SECTIONS as u32 {
-        return Err(TrustedSetupError::InvalidNumberOfSections(n_sections));
+        return Err(SetupFileError::InvalidNumberOfSections(n_sections));
     }
 
     Ok(())
 }
 
 #[derive(Debug, Error, PartialEq, Eq)]
-pub enum TrustedSetupError {
+pub enum SetupFileError {
     #[error("Element size mismatch. Obtained: {0:?}, Expected: {1:?}")]
     ElementSizeMismatch(u64, u64),
     #[error("Section is uninitialized: {0}")]
