@@ -1,6 +1,8 @@
-//! # KZG Module
+//! # KZG Polynomial Commitment Scheme
 //!
 //! This module contains the implementation of the KZG polynomial commitment scheme.
+
+pub mod setup;
 
 use crate::pol_op::*;
 use ark_ec::pairing::Pairing;

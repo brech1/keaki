@@ -1,6 +1,6 @@
-//! # Extractable Witness Encryption Module
+//! # Extractable Witness Encryption
 //!
-//! This module contains the implementation of an Extractable Witness Encryption from an Extractable Witness KEM.'
+//! This module contains the implementation of an Extractable Witness Encryption from an Extractable Witness KEM.
 
 #![allow(clippy::type_complexity)]
 use crate::{
