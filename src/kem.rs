@@ -133,226 +133,227 @@ impl From<KZGError> for KEMError {
 
 #[cfg(test)]
 mod tests {
-    // use super::*;
-    // use crate::pol_op::evaluate_polynomial;
-    // use ark_bls12_381::{Bls12_381, Fr, G1Projective, G2Projective};
-    // use ark_std::test_rng;
-    // use ark_std::UniformRand;
+    use super::*;
+    use crate::pol_op::evaluate_polynomial;
+    use ark_bls12_381::G1Projective;
+    use ark_bls12_381::{Bls12_381, Fr};
+    use ark_std::test_rng;
+    use ark_std::UniformRand;
 
-    // #[test]
-    // fn test_encapsulation_decapsulation() {
-    //     let rng = &mut test_rng();
-    //     let g1_gen = G1Projective::rand(rng);
-    //     let g2_gen = G2Projective::rand(rng);
-    //     let secret = Fr::rand(rng);
-    //     let max_degree = 10;
-    //     let point: Fr = Fr::rand(rng);
-    //     let kzg: KZG<Bls12_381> = KZG::setup(g1_gen, g2_gen, max_degree, secret);
+    #[test]
+    fn test_encapsulation_decapsulation() {
+        let rng = &mut test_rng();
+        let secret = Fr::rand(rng);
+        let max_degree = 10;
+        let kzg = KZG::<Bls12_381>::setup(secret, max_degree);
 
-    //     // p(x) = 7 x^4 + 9 x^3 - 5 x^2 - 25 x - 24
-    //     let p = vec![
-    //         Fr::from(-24),
-    //         Fr::from(-25),
-    //         Fr::from(-5),
-    //         Fr::from(9),
-    //         Fr::from(7),
-    //     ];
-    //     let val = evaluate_polynomial::<Bls12_381>(&p, &point);
-    //     let commitment = kzg.commit(&p).unwrap();
+        // p(x) = 7 x^4 + 9 x^3 - 5 x^2 - 25 x - 24
+        let p = vec![
+            Fr::from(-24),
+            Fr::from(-25),
+            Fr::from(-5),
+            Fr::from(9),
+            Fr::from(7),
+        ];
 
-    //     // Encapsulate
-    //     let (ciphertext, mut enc_key) = encapsulate(&kzg, commitment, point, val).unwrap();
-    //     let mut enc_key_bytes = [0u8; 32];
-    //     enc_key.fill(&mut enc_key_bytes);
+        let point: Fr = Fr::rand(rng);
+        let eval = evaluate_polynomial::<Bls12_381>(&p, &point);
+        let commitment = kzg.commit(&p).unwrap();
 
-    //     // Decapsulate
-    //     let proof = kzg.open(&p, &point).unwrap();
-    //     let mut dec_key = decapsulate::<Bls12_381>(proof, ciphertext).unwrap();
-    //     let mut dec_key_bytes = [0u8; 32];
-    //     dec_key.fill(&mut dec_key_bytes);
+        // Encapsulate
+        let (ciphertext, mut enc_key) = encapsulate(&kzg, commitment, point, eval).unwrap();
+        let mut enc_key_bytes = [0u8; 32];
+        enc_key.fill(&mut enc_key_bytes);
 
-    //     assert_eq!(enc_key_bytes, dec_key_bytes);
-    // }
+        // Decapsulate
+        let proof = kzg.open(&p, &point).unwrap();
+        let mut dec_key = decapsulate::<Bls12_381>(proof, ciphertext).unwrap();
+        let mut dec_key_bytes = [0u8; 32];
+        dec_key.fill(&mut dec_key_bytes);
 
-    // #[test]
-    // fn test_decapsulation_invalid_proof() {
-    //     let rng = &mut test_rng();
-    //     let g1_gen = G1Projective::rand(rng);
-    //     let g2_gen = G2Projective::rand(rng);
-    //     let secret = Fr::rand(rng);
-    //     let max_degree = 10;
-    //     let point: Fr = Fr::rand(rng);
-    //     let kzg: KZG<Bls12_381> = KZG::setup(g1_gen, g2_gen, max_degree, secret);
+        // Assert that the keys match
+        assert_eq!(enc_key_bytes, dec_key_bytes);
+    }
 
-    //     // p(x) = 7 x^4 + 9 x^3 - 5 x^2 - 25 x - 24
-    //     let p = vec![
-    //         Fr::from(-24),
-    //         Fr::from(-25),
-    //         Fr::from(-5),
-    //         Fr::from(9),
-    //         Fr::from(7),
-    //     ];
-    //     let val = evaluate_polynomial::<Bls12_381>(&p, &point);
-    //     let commitment = kzg.commit(&p).unwrap();
+    #[test]
+    fn test_decapsulation_invalid_proof() {
+        let rng = &mut test_rng();
+        let secret = Fr::rand(rng);
+        let max_degree = 10;
+        let kzg = KZG::<Bls12_381>::setup(secret, max_degree);
 
-    //     // Encapsulate
-    //     let (ciphertext, mut enc_key) =
-    //         encapsulate::<Bls12_381>(&kzg, commitment, point, val).unwrap();
-    //     let mut enc_key_bytes = [0u8; 32];
-    //     enc_key.fill(&mut enc_key_bytes);
+        // p(x) = 7 x^4 + 9 x^3 - 5 x^2 - 25 x - 24
+        let p = vec![
+            Fr::from(-24),
+            Fr::from(-25),
+            Fr::from(-5),
+            Fr::from(9),
+            Fr::from(7),
+        ];
 
-    //     // Generate an invalid proof
-    //     let wrong_point: Fr = Fr::rand(rng);
-    //     let invalid_proof = kzg.open(&p, &wrong_point).unwrap();
+        let point: Fr = Fr::rand(rng);
+        let eval = evaluate_polynomial::<Bls12_381>(&p, &point);
+        let commitment = kzg.commit(&p).unwrap();
 
-    //     // Attempt to decapsulate with the invalid proof
-    //     let mut dec_key = decapsulate::<Bls12_381>(invalid_proof, ciphertext).unwrap();
-    //     let mut dec_key_bytes = [0u8; 32];
-    //     dec_key.fill(&mut dec_key_bytes);
+        // Encapsulate
+        let (ciphertext, mut enc_key) =
+            encapsulate::<Bls12_381>(&kzg, commitment, point, eval).unwrap();
+        let mut enc_key_bytes = [0u8; 32];
+        enc_key.fill(&mut enc_key_bytes);
 
-    //     // The keys should not match
-    //     assert_ne!(enc_key_bytes, dec_key_bytes);
-    // }
+        // Decapsulate with a different polynomial
+        // q(x) = 7 x^4 + 9 x^3 - 5 x^2 - 29 x - 24
+        let q = vec![
+            Fr::from(-24),
+            Fr::from(-29),
+            Fr::from(-5),
+            Fr::from(9),
+            Fr::from(7),
+        ];
 
-    // #[test]
-    // fn test_decapsulation_invalid_ciphertext() {
-    //     let rng = &mut test_rng();
-    //     let g1_gen = G1Projective::rand(rng);
-    //     let g2_gen = G2Projective::rand(rng);
-    //     let secret = Fr::rand(rng);
-    //     let max_degree = 10;
-    //     let point: Fr = Fr::rand(rng);
-    //     let kzg: KZG<Bls12_381> = KZG::setup(g1_gen, g2_gen, max_degree, secret);
+        let invalid_proof = kzg.open(&q, &point).unwrap();
+        let mut dec_key = decapsulate::<Bls12_381>(invalid_proof, ciphertext).unwrap();
+        let mut dec_key_bytes = [0u8; 32];
+        dec_key.fill(&mut dec_key_bytes);
 
-    //     // p(x) = 7 x^4 + 9 x^3 - 5 x^2 - 25 x - 24
-    //     let p = vec![
-    //         Fr::from(-24),
-    //         Fr::from(-25),
-    //         Fr::from(-5),
-    //         Fr::from(9),
-    //         Fr::from(7),
-    //     ];
-    //     let val = evaluate_polynomial::<Bls12_381>(&p, &point);
-    //     let commitment = kzg.commit(&p).unwrap();
+        // Keys should not match
+        assert_ne!(enc_key_bytes, dec_key_bytes);
+    }
 
-    //     // Encapsulate
-    //     let (ciphertext, mut enc_key) =
-    //         encapsulate::<Bls12_381>(&kzg, commitment, point, val).unwrap();
-    //     let mut enc_key_bytes = [0u8; 32];
-    //     enc_key.fill(&mut enc_key_bytes);
+    #[test]
+    fn test_decapsulation_invalid_ciphertext() {
+        let rng = &mut test_rng();
+        let secret = Fr::rand(rng);
+        let max_degree = 10;
+        let kzg = KZG::<Bls12_381>::setup(secret, max_degree);
 
-    //     // Generate an invalid ciphertext (e.g., by using a different random value)
-    //     let invalid_ciphertext = ciphertext.mul(Fr::rand(rng));
+        // p(x) = 7 x^4 + 9 x^3 - 5 x^2 - 25 x - 24
+        let p = vec![
+            Fr::from(-24),
+            Fr::from(-25),
+            Fr::from(-5),
+            Fr::from(9),
+            Fr::from(7),
+        ];
+        let point: Fr = Fr::rand(rng);
+        let val = evaluate_polynomial::<Bls12_381>(&p, &point);
+        let commitment = kzg.commit(&p).unwrap();
 
-    //     // Attempt to decapsulate with the invalid ciphertext
-    //     let proof = kzg.open(&p, &point).unwrap();
+        // Encapsulate
+        let (ciphertext, mut enc_key) =
+            encapsulate::<Bls12_381>(&kzg, commitment, point, val).unwrap();
+        let mut enc_key_bytes = [0u8; 32];
+        enc_key.fill(&mut enc_key_bytes);
 
-    //     let mut dec_key = decapsulate::<Bls12_381>(proof, invalid_ciphertext).unwrap();
-    //     let mut dec_key_bytes = [0u8; 32];
-    //     dec_key.fill(&mut dec_key_bytes);
+        // Generate an random ciphertext
+        let invalid_ciphertext = ciphertext.mul(Fr::rand(rng));
 
-    //     // The keys should not match
-    //     assert_ne!(enc_key_bytes, dec_key_bytes);
-    // }
+        // Attempt to decapsulate with the invalid ciphertext
+        let proof = kzg.open(&p, &point).unwrap();
 
-    // #[test]
-    // fn test_decapsulation_wrong_proof_ciphertext() {
-    //     let rng = &mut test_rng();
-    //     let g1_gen = G1Projective::rand(rng);
-    //     let g2_gen = G2Projective::rand(rng);
-    //     let secret = Fr::rand(rng);
-    //     let max_degree = 10;
-    //     let point1: Fr = Fr::rand(rng);
-    //     let point2: Fr = Fr::rand(rng);
-    //     let kzg: KZG<Bls12_381> = KZG::setup(g1_gen, g2_gen, max_degree, secret);
+        let mut dec_key = decapsulate::<Bls12_381>(proof, invalid_ciphertext).unwrap();
+        let mut dec_key_bytes = [0u8; 32];
+        dec_key.fill(&mut dec_key_bytes);
 
-    //     // p(x) = 7 x^4 + 9 x^3 - 5 x^2 - 25 x - 24
-    //     let p = vec![
-    //         Fr::from(-24),
-    //         Fr::from(-25),
-    //         Fr::from(-5),
-    //         Fr::from(9),
-    //         Fr::from(7),
-    //     ];
-    //     let val1 = evaluate_polynomial::<Bls12_381>(&p, &point1);
-    //     let commitment = kzg.commit(&p).unwrap();
+        // Keys should not match
+        assert_ne!(enc_key_bytes, dec_key_bytes);
+    }
 
-    //     // Encapsulate with point1
-    //     let (ciphertext1, mut enc_key) =
-    //         encapsulate::<Bls12_381>(&kzg, commitment, point1, val1).unwrap();
-    //     let mut enc_key_bytes = [0u8; 32];
-    //     enc_key.fill(&mut enc_key_bytes);
+    #[test]
+    fn test_decapsulation_wrong_point() {
+        let rng = &mut test_rng();
+        let secret = Fr::rand(rng);
+        let max_degree = 10;
+        let kzg = KZG::<Bls12_381>::setup(secret, max_degree);
 
-    //     // Proof for point2
-    //     let proof2 = kzg.open(&p, &point2).unwrap();
+        // p(x) = 7 x^4 + 9 x^3 - 5 x^2 - 25 x - 24
+        let p = vec![
+            Fr::from(-24),
+            Fr::from(-25),
+            Fr::from(-5),
+            Fr::from(9),
+            Fr::from(7),
+        ];
 
-    //     // Decapsulate with proof for point2
-    //     let mut dec_key = decapsulate::<Bls12_381>(proof2, ciphertext1).unwrap();
-    //     let mut dec_key_bytes = [0u8; 32];
-    //     dec_key.fill(&mut dec_key_bytes);
+        let point1: Fr = Fr::rand(rng);
+        let val1 = evaluate_polynomial::<Bls12_381>(&p, &point1);
+        let commitment = kzg.commit(&p).unwrap();
 
-    //     // Keys should not match
-    //     assert_ne!(enc_key_bytes, dec_key_bytes);
-    // }
+        // Encapsulate with point1
+        let (ciphertext1, mut enc_key) =
+            encapsulate::<Bls12_381>(&kzg, commitment, point1, val1).unwrap();
+        let mut enc_key_bytes = [0u8; 32];
+        enc_key.fill(&mut enc_key_bytes);
 
-    // #[test]
-    // fn test_encapsulate_decapsulate_set() {
-    //     let rng = &mut test_rng();
-    //     let g1_gen = G1Projective::rand(rng);
-    //     let g2_gen = G2Projective::rand(rng);
-    //     let secret = Fr::rand(rng);
-    //     let max_degree = 10;
-    //     let kzg: KZG<Bls12_381> = KZG::setup(g1_gen, g2_gen, max_degree, secret);
+        // Proof for point2
+        let point2: Fr = Fr::rand(rng);
+        let proof2 = kzg.open(&p, &point2).unwrap();
 
-    //     // Define the polynomial p(x) = 7 x^4 + 9 x^3 - 5 x^2 - 25 x - 24
-    //     let p = vec![
-    //         Fr::from(-24),
-    //         Fr::from(-25),
-    //         Fr::from(-5),
-    //         Fr::from(9),
-    //         Fr::from(7),
-    //     ];
-    //     let commitment = kzg.commit(&p).unwrap();
+        // Decapsulate with proof for point2
+        let mut dec_key = decapsulate::<Bls12_381>(proof2, ciphertext1).unwrap();
+        let mut dec_key_bytes = [0u8; 32];
+        dec_key.fill(&mut dec_key_bytes);
 
-    //     // Define points and their corresponding values
-    //     let points = vec![Fr::rand(rng), Fr::rand(rng), Fr::rand(rng)];
-    //     let values: Vec<Fr> = points
-    //         .iter()
-    //         .map(|point| evaluate_polynomial::<Bls12_381>(&p, point))
-    //         .collect();
+        // Keys should not match
+        assert_ne!(enc_key_bytes, dec_key_bytes);
+    }
 
-    //     // Encapsulate the set
-    //     let (ciphertexts, mut enc_keys) =
-    //         encapsulate_set::<Bls12_381>(&kzg, commitment, &points, &values).unwrap();
-    //     let enc_keys_bytes: Vec<[u8; 32]> = enc_keys
-    //         .iter_mut()
-    //         .map(|enc_key| {
-    //             let mut enc_key_bytes = [0u8; 32];
-    //             enc_key.fill(&mut enc_key_bytes);
-    //             enc_key_bytes
-    //         })
-    //         .collect();
+    #[test]
+    fn test_encapsulate_decapsulate_set() {
+        let rng = &mut test_rng();
+        let secret = Fr::rand(rng);
+        let max_degree = 10;
+        let kzg = KZG::<Bls12_381>::setup(secret, max_degree);
 
-    //     // Generate proofs for the points
-    //     let proofs: Vec<G1Projective> = points
-    //         .iter()
-    //         .map(|point| kzg.open(&p, point).unwrap())
-    //         .collect();
+        // Define the polynomial p(x) = 7 x^4 + 9 x^3 - 5 x^2 - 25 x - 24
+        let p = vec![
+            Fr::from(-24),
+            Fr::from(-25),
+            Fr::from(-5),
+            Fr::from(9),
+            Fr::from(7),
+        ];
+        let commitment = kzg.commit(&p).unwrap();
 
-    //     // Decapsulate the set
-    //     let mut dec_keys = decapsulate_set::<Bls12_381>(&proofs, &ciphertexts).unwrap();
-    //     let dec_keys_bytes: Vec<[u8; 32]> = dec_keys
-    //         .iter_mut()
-    //         .map(|dec_key| {
-    //             let mut dec_key_bytes = [0u8; 32];
-    //             dec_key.fill(&mut dec_key_bytes);
-    //             dec_key_bytes
-    //         })
-    //         .collect();
+        // Define points and their corresponding values
+        let points = vec![Fr::rand(rng), Fr::rand(rng), Fr::rand(rng)];
+        let values: Vec<Fr> = points
+            .iter()
+            .map(|point| evaluate_polynomial::<Bls12_381>(&p, point))
+            .collect();
 
-    //     // Compare the encapsulated and decapsulated keys
-    //     for (enc_key_bytes, dec_key_bytes) in enc_keys_bytes.iter().zip(dec_keys_bytes.iter()) {
-    //         assert_eq!(enc_key_bytes, dec_key_bytes);
-    //     }
-    // }
+        // Encapsulate the set
+        let (ciphertexts, mut enc_keys) =
+            encapsulate_set::<Bls12_381>(&kzg, commitment, &points, &values).unwrap();
+        let enc_keys_bytes: Vec<[u8; 32]> = enc_keys
+            .iter_mut()
+            .map(|enc_key| {
+                let mut enc_key_bytes = [0u8; 32];
+                enc_key.fill(&mut enc_key_bytes);
+                enc_key_bytes
+            })
+            .collect();
+
+        // Generate proofs for the points
+        let proofs: Vec<G1Projective> = points
+            .iter()
+            .map(|point| kzg.open(&p, point).unwrap())
+            .collect();
+
+        // Decapsulate the set
+        let mut dec_keys = decapsulate_set::<Bls12_381>(&proofs, &ciphertexts).unwrap();
+        let dec_keys_bytes: Vec<[u8; 32]> = dec_keys
+            .iter_mut()
+            .map(|dec_key| {
+                let mut dec_key_bytes = [0u8; 32];
+                dec_key.fill(&mut dec_key_bytes);
+                dec_key_bytes
+            })
+            .collect();
+
+        // Compare the encapsulated and decapsulated keys
+        for (enc_key_bytes, dec_key_bytes) in enc_keys_bytes.iter().zip(dec_keys_bytes.iter()) {
+            assert_eq!(enc_key_bytes, dec_key_bytes);
+        }
+    }
 }
