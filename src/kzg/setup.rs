@@ -8,7 +8,7 @@ use ark_ec::{pairing::Pairing, AffineRepr};
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize, Compress};
 use std::{
     fs::File,
-    io::{self, Cursor, Read},
+    io::{Cursor, Read},
     path::PathBuf,
 };
 use thiserror::Error;
@@ -29,26 +29,26 @@ pub enum SectionId {
     #[default]
     /// Section descriptions.
     Header = 1,
-    /// Points tau*G1.
+    /// Points [tau^i]_1
     TauG1 = 2,
-    /// Points tau*G2.
+    /// Points [tau^i]_2
     TauG2 = 3,
-    /// Points alpha*tau*G1.
+    /// Points [alpha * tau^i]_1
     AlphaTauG1 = 4,
-    /// Points beta*tau*G1.
+    /// Points [beta * tau^i]_1
     BetaTauG1 = 5,
-    /// Single point beta*tau*G2.
+    /// Single point [beta * tau]_2
     BetaG2 = 6,
     /// Previous contributions.
     Contributions = 7,
     // Phase 2 related sections.
-    /// Lagrange basis tau*G1.
+    /// Lagrange basis [tau^i]_1
     LagrangeG1 = 12,
-    /// Lagrange basis tau*G2.
+    /// Lagrange basis [tau^i]_2
     LagrangeG2 = 13,
-    /// Lagrange basis alpha*tau*G1.
+    /// Lagrange basis [alpha * tau^i]_1
     LagrangeAlphaTauG1 = 14,
-    /// Lagrange basis beta*tau*G1.
+    /// Lagrange basis [beta * tau^i]_1
     LagrangeBetaTauG1 = 15,
 }
 
@@ -109,10 +109,14 @@ impl FileLoader {
     }
 
     /// Loads the file.
-    pub fn load(&self) -> Result<Vec<u8>, io::Error> {
-        let mut file = File::open(&self.filepath)?;
+    pub fn load(&self) -> Result<Vec<u8>, SetupFileError> {
+        let mut file =
+            File::open(&self.filepath).map_err(|e| SetupFileError::FileError(e.to_string()))?;
+
         let mut data = Vec::new();
-        file.read_to_end(&mut data)?;
+        file.read_to_end(&mut data)
+            .map_err(|e| SetupFileError::FileError(e.to_string()))?;
+
         Ok(data)
     }
 }
@@ -341,7 +345,23 @@ pub fn verify_metadata(file_data: &[u8]) -> Result<(), SetupFileError> {
     Ok(())
 }
 
-#[derive(Debug, Error, PartialEq, Eq)]
+/// Returns the G1 and G2 powers of tau.
+pub fn get_powers_from_file<E: Pairing>(
+    file: &str,
+) -> Result<(Vec<E::G1>, Vec<E::G2>), SetupFileError> {
+    let file_data = FileLoader::new(PathBuf::from(file)).load()?;
+    verify_metadata(&file_data)?;
+
+    let sections = FileSections::parse(&file_data)?;
+
+    let header_section = HeaderSection::parse(&file_data, &sections)?;
+    let tau_g1_section = TauG1Section::<E>::parse(&file_data, &sections, header_section.power)?;
+    let tau_g2_section = TauG2Section::<E>::parse(&file_data, &sections, header_section.power)?;
+
+    Ok((tau_g1_section.powers, tau_g2_section.powers))
+}
+
+#[derive(Error, Debug, PartialEq, Eq)]
 pub enum SetupFileError {
     #[error("Element size mismatch. Obtained: {0:?}, Expected: {1:?}")]
     ElementSizeMismatch(u64, u64),
@@ -349,6 +369,8 @@ pub enum SetupFileError {
     EmptySection(u8),
     #[error("Field modulus mismatch. Obtained: {0:?}, Expected: {1:?}")]
     FieldModulusMismatch(Vec<u8>, Vec<u8>),
+    #[error("File error: {0:?}")]
+    FileError(String),
     #[error("Invalid file type: {0:?}")]
     InvalidFileType([u8; 4]),
     #[error("Invalid number of sections: {0:?}")]
@@ -365,7 +387,6 @@ pub enum SetupFileError {
 mod tests {
     use super::*;
     use ark_bn254::Bn254;
-    use ark_ec::bn::Bn;
     use ark_ff::{BigInt, BigInteger, PrimeField};
 
     pub const TEST_PTAU_FILEPATH: &str = "ptau/ppot_0080_01.ptau.test";
@@ -374,7 +395,7 @@ mod tests {
     pub const TEST_CEREMONY_POWER: u32 = 28;
     pub const TEST_FILE_POWER: u32 = 1;
 
-    pub const BN254_FIELD_MOD: BigInt<4> = <Bn<ark_bn254::Config> as Pairing>::BaseField::MODULUS;
+    pub const BN254_FIELD_MOD: BigInt<4> = <Bn254 as Pairing>::BaseField::MODULUS;
 
     #[test]
     fn test_section_id() {
@@ -490,5 +511,13 @@ mod tests {
             tau_g2_section.powers.len(),
             2u32.pow(TEST_FILE_POWER) as usize
         );
+    }
+
+    #[test]
+    fn test_powers_of_tau() {
+        let (g1_pow, g2_pow) = get_powers_from_file::<Bn254>(TEST_PTAU_FILEPATH).unwrap();
+
+        assert_eq!(g1_pow.len(), 2u32.pow(TEST_FILE_POWER) as usize * 2 - 1);
+        assert_eq!(g2_pow.len(), 2u32.pow(TEST_FILE_POWER) as usize);
     }
 }
