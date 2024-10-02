@@ -106,125 +106,121 @@ impl From<KEMError> for WEError {
     }
 }
 
-// #[cfg(test)]
-// mod tests {
-//     use super::*;
-//     use crate::pol_op::evaluate_polynomial;
-//     use ark_bls12_381::{Bls12_381, Fr, G1Projective, G2Projective};
-//     use ark_std::test_rng;
-//     use ark_std::UniformRand;
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::pol_op::evaluate_polynomial;
+    use ark_bls12_381::{Bls12_381, Fr};
+    use ark_std::test_rng;
+    use ark_std::UniformRand;
 
-//     #[test]
-//     fn test_encrypt_single() {
-//         let rng = &mut test_rng();
-//         let g1_gen = G1Projective::rand(rng);
-//         let g2_gen = G2Projective::rand(rng);
-//         let secret = Fr::rand(rng);
-//         let max_degree = 10;
-//         let point: Fr = Fr::rand(rng);
-//         let kzg = KZG::<Bls12_381>::setup(g1_gen, g2_gen, max_degree, secret);
-//         let we: WE<Bls12_381> = WE::new(kzg);
+    #[test]
+    fn test_encrypt_single() {
+        let rng = &mut test_rng();
+        let secret = Fr::rand(rng);
+        let max_degree = 10;
+        let kzg = KZG::<Bls12_381>::setup(secret, max_degree);
+        let we: WE<Bls12_381> = WE::new(kzg);
 
-//         // p(x) = 7 x^4 + 9 x^3 - 5 x^2 - 25 x - 24
-//         let p = vec![
-//             Fr::from(-24),
-//             Fr::from(-25),
-//             Fr::from(-5),
-//             Fr::from(9),
-//             Fr::from(7),
-//         ];
-//         let val = evaluate_polynomial::<Bls12_381>(&p, &point);
-//         let commitment = we.kzg().commit(&p).unwrap();
+        // p(x) = 7 x^4 + 9 x^3 - 5 x^2 - 25 x - 24
+        let p = vec![
+            Fr::from(-24),
+            Fr::from(-25),
+            Fr::from(-5),
+            Fr::from(9),
+            Fr::from(7),
+        ];
 
-//         let msg = b"helloworld";
+        let point: Fr = Fr::rand(rng);
+        let val = evaluate_polynomial::<Bls12_381>(&p, &point);
+        let commitment = we.kzg().commit(&p).unwrap();
 
-//         let (key_ct, msg_ct) = we.encrypt_single(commitment, point, val, msg).unwrap();
+        let msg = b"helloworld";
 
-//         let proof = we.kzg().open(&p, &point).unwrap();
+        let (key_ct, msg_ct) = we.encrypt_single(commitment, point, val, msg).unwrap();
 
-//         let decrypted_msg = we.decrypt_single(proof, key_ct, &msg_ct).unwrap();
+        let proof = we.kzg().open(&p, &point).unwrap();
 
-//         assert_eq!(msg.to_vec(), decrypted_msg);
-//     }
+        let decrypted_msg = we.decrypt_single(proof, key_ct, &msg_ct).unwrap();
 
-//     #[test]
-//     fn test_decrypt_single_invalid_proof() {
-//         let rng = &mut test_rng();
-//         let g1_gen = G1Projective::rand(rng);
-//         let g2_gen = G2Projective::rand(rng);
-//         let secret = Fr::rand(rng);
-//         let max_degree = 10;
-//         let point: Fr = Fr::rand(rng);
-//         let kzg = KZG::<Bls12_381>::setup(g1_gen, g2_gen, max_degree, secret);
-//         let we: WE<Bls12_381> = WE::new(kzg);
+        assert_eq!(msg.to_vec(), decrypted_msg);
+    }
 
-//         // p(x) = 7 x^4 + 9 x^3 - 5 x^2 - 25 x - 24
-//         let p = vec![
-//             Fr::from(-24),
-//             Fr::from(-25),
-//             Fr::from(-5),
-//             Fr::from(9),
-//             Fr::from(7),
-//         ];
-//         let val = evaluate_polynomial::<Bls12_381>(&p, &point);
-//         let commitment = we.kzg().commit(&p).unwrap();
+    #[test]
+    fn test_decrypt_single_invalid_proof() {
+        let rng = &mut test_rng();
+        let secret = Fr::rand(rng);
+        let max_degree = 10;
+        let kzg = KZG::<Bls12_381>::setup(secret, max_degree);
+        let we: WE<Bls12_381> = WE::new(kzg);
 
-//         let msg = b"helloworld";
-//         let (key_ct, msg_ct) = we.encrypt_single(commitment, point, val, msg).unwrap();
+        // p(x) = 7 x^4 + 9 x^3 - 5 x^2 - 25 x - 24
+        let p = vec![
+            Fr::from(-24),
+            Fr::from(-25),
+            Fr::from(-5),
+            Fr::from(9),
+            Fr::from(7),
+        ];
 
-//         let wrong_point: Fr = Fr::rand(rng);
-//         let invalid_proof = we.kzg().open(&p, &wrong_point).unwrap();
+        let point: Fr = Fr::rand(rng);
+        let val = evaluate_polynomial::<Bls12_381>(&p, &point);
+        let commitment = we.kzg().commit(&p).unwrap();
 
-//         let decrypted_msg = we.decrypt_single(invalid_proof, key_ct, &msg_ct).unwrap();
+        let msg = b"helloworld";
+        let (key_ct, msg_ct) = we.encrypt_single(commitment, point, val, msg).unwrap();
 
-//         assert_ne!(msg.to_vec(), decrypted_msg);
-//     }
+        let wrong_point: Fr = Fr::rand(rng);
+        let invalid_proof = we.kzg().open(&p, &wrong_point).unwrap();
 
-//     #[test]
-//     fn test_encrypt_decrypt_single() {
-//         let rng = &mut test_rng();
-//         let g1_gen = G1Projective::rand(rng);
-//         let g2_gen = G2Projective::rand(rng);
-//         let secret = Fr::rand(rng);
-//         let max_degree = 10;
-//         let kzg = KZG::<Bls12_381>::setup(g1_gen, g2_gen, max_degree, secret);
-//         let we: WE<Bls12_381> = WE::new(kzg);
+        let decrypted_msg = we.decrypt_single(invalid_proof, key_ct, &msg_ct).unwrap();
 
-//         let p = vec![
-//             Fr::from(-24),
-//             Fr::from(-25),
-//             Fr::from(-5),
-//             Fr::from(9),
-//             Fr::from(7),
-//         ];
-//         let points = vec![Fr::rand(rng), Fr::rand(rng), Fr::rand(rng)];
-//         let values: Vec<Fr> = points
-//             .iter()
-//             .map(|&point| evaluate_polynomial::<Bls12_381>(&p, &point))
-//             .collect();
-//         let commitment = we.kzg().commit(&p).unwrap();
+        assert_ne!(msg.to_vec(), decrypted_msg);
+    }
 
-//         let msg = b"helloworld";
+    #[test]
+    fn test_encrypt_decrypt_single() {
+        let rng = &mut test_rng();
+        let secret = Fr::rand(rng);
+        let max_degree = 10;
+        let kzg = KZG::<Bls12_381>::setup(secret, max_degree);
+        let we: WE<Bls12_381> = WE::new(kzg);
 
-//         let cts = we
-//             .encrypt(commitment, points.clone(), values.clone(), msg)
-//             .unwrap();
+        let p = vec![
+            Fr::from(-24),
+            Fr::from(-25),
+            Fr::from(-5),
+            Fr::from(9),
+            Fr::from(7),
+        ];
+        let points = vec![Fr::rand(rng), Fr::rand(rng), Fr::rand(rng)];
+        let values: Vec<Fr> = points
+            .iter()
+            .map(|&point| evaluate_polynomial::<Bls12_381>(&p, &point))
+            .collect();
+        let commitment = we.kzg().commit(&p).unwrap();
 
-//         let target_index = 1;
-//         let proof = we.kzg().open(&p, &points[target_index]).unwrap();
+        let msg = b"helloworld";
 
-//         let (correct_key_ct, correct_msg_ct) = &cts[target_index];
-//         let decrypted_msg = we
-//             .decrypt_single(proof, *correct_key_ct, correct_msg_ct)
-//             .unwrap();
-//         assert_eq!(msg.to_vec(), decrypted_msg);
+        let cts = we
+            .encrypt(commitment, points.clone(), values.clone(), msg)
+            .unwrap();
 
-//         // Attempt to decrypt a different message with the same proof
-//         let (wrong_key_ct, wrong_msg_ct) = &cts[0];
-//         let wrong_decrypted_msg = we
-//             .decrypt_single(proof, *wrong_key_ct, wrong_msg_ct)
-//             .unwrap();
+        let target_index = 1;
+        let proof = we.kzg().open(&p, &points[target_index]).unwrap();
 
-//         assert_ne!(msg.to_vec(), wrong_decrypted_msg);
-//     }
-// }
+        let (correct_key_ct, correct_msg_ct) = &cts[target_index];
+        let decrypted_msg = we
+            .decrypt_single(proof, *correct_key_ct, correct_msg_ct)
+            .unwrap();
+        assert_eq!(msg.to_vec(), decrypted_msg);
+
+        // Attempt to decrypt a different message with the same proof
+        let (wrong_key_ct, wrong_msg_ct) = &cts[0];
+        let wrong_decrypted_msg = we
+            .decrypt_single(proof, *wrong_key_ct, wrong_msg_ct)
+            .unwrap();
+
+        assert_ne!(msg.to_vec(), wrong_decrypted_msg);
+    }
+}
