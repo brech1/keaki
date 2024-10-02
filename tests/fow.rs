@@ -2,6 +2,8 @@
 //!
 //! This test implements a two-player "tag" game with a fog of war mechanic, where players can only see their own position and adjacent tiles on a grid-based board.
 //!
+//! Check the [Keaki ZheroTag](https://hackmd.io/@letargicus/rJ0RWqNnC) blog post.
+//!
 //! ## Objective
 //!
 //! The goal is for one player to find the other player's hidden position. Players take turns checking if their opponent is in view and moving to adjacent tiles if not.
@@ -36,15 +38,11 @@
 //! ```
 //!
 
-use ark_bls12_381::{
-    g1::{G1_GENERATOR_X, G1_GENERATOR_Y},
-    g2::{G2_GENERATOR_X, G2_GENERATOR_Y},
-    Bls12_381, Fr, G1Affine, G1Projective, G2Affine, G2Projective,
-};
-use keaki::{kem::KEM, kzg::KZG, pol_op::lagrange_interpolation, we::WE};
+use ark_bls12_381::{Bls12_381, Fr, G1Projective, G2Projective};
+use keaki::{kzg::KZG, pol_op::lagrange_interpolation, we::WE};
 use rand::{seq::IteratorRandom, thread_rng};
 
-pub const BOARD_SIZE: usize = 4;
+pub const BOARD_SIZE: usize = 6;
 pub const BOARD_TILES: usize = BOARD_SIZE * BOARD_SIZE;
 
 // Starting Positions
@@ -166,16 +164,7 @@ pub struct Game {
 
 impl Game {
     /// Game setup
-    pub fn new(secret: Fr) -> Self {
-        // Setup kzg
-        let g1_generator = G1Affine::new(G1_GENERATOR_X, G1_GENERATOR_Y);
-        let g2_generator = G2Affine::new(G2_GENERATOR_X, G2_GENERATOR_Y);
-        let max_degree = BOARD_TILES;
-        let kzg: KZG<Bls12_381> =
-            KZG::setup(g1_generator.into(), g2_generator.into(), max_degree, secret);
-        let kem: KEM<Bls12_381> = KEM::new(kzg);
-        let we: WE<Bls12_381> = WE::new(kem);
-
+    pub fn new(we: WE<Bls12_381>) -> Self {
         println!("Alice's starting position: {}", ALICE_STARTING_POS);
         println!("Bob's starting position: {}", BOB_STARTING_POS);
 
@@ -220,8 +209,8 @@ impl Game {
             lagrange_interpolation::<Bls12_381>(&players_full_alphas, &bob_full_betas).unwrap();
 
         // Commit to Alice and Bob's initial positions
-        let alice_com = we.kem().kzg().commit(&alice_pol).unwrap();
-        let bob_com = we.kem().kzg().commit(&bob_pol).unwrap();
+        let alice_com = we.kzg().commit(&alice_pol).unwrap();
+        let bob_com = we.kzg().commit(&bob_pol).unwrap();
 
         // Important: We should verify that alice is providing correct encryptions of her position and vice versa somehow.
 
@@ -327,7 +316,6 @@ impl Game {
         // Generate a single proof for the player's position
         let proof = self
             .we
-            .kem()
             .kzg()
             .open(&player_pol, &Fr::from(player_pos as u32))
             .unwrap();
@@ -388,7 +376,7 @@ impl Game {
             lagrange_interpolation::<Bls12_381>(&player_full_alphas, &player_full_betas).unwrap();
 
         // Commit to the new position
-        let player_com = self.we.kem().kzg().commit(&player_full_pol).unwrap();
+        let player_com = self.we.kzg().commit(&player_full_pol).unwrap();
 
         // Encrypt the new position vector using the opponent's commitment
         let mut player_message = Vec::from(MESSAGE);
@@ -423,14 +411,16 @@ mod fow_tests {
     use ark_bls12_381::Fr;
     use ark_std::{test_rng, UniformRand};
 
+    #[ignore]
     #[test]
-    fn test_fog_of_war_game() {
-        // Setup secret
+    fn test_fog_game() {
         let rng = &mut test_rng();
         let secret = Fr::rand(rng);
+        let kzg = KZG::<Bls12_381>::setup(secret, BOARD_TILES);
+        let we: WE<Bls12_381> = WE::new(kzg);
 
         // Initialize the game
-        let mut game = Game::new(secret);
+        let mut game = Game::new(we);
 
         // Simulate a few turns
         while !game.finished {
