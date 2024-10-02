@@ -168,7 +168,7 @@ pub fn lagrange_interpolation<E: Pairing>(
     Ok(result)
 }
 
-#[derive(Error, Debug)]
+#[derive(Error, Debug, PartialEq, Eq)]
 pub enum OperationError {
     #[error("Cannot divide by polynomial of higher degree.")]
     DenominatorTooLarge,

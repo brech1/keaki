@@ -94,7 +94,7 @@ impl<E: Pairing> WE<E> {
     }
 }
 
-#[derive(Error, Debug)]
+#[derive(Error, Debug, PartialEq, Eq)]
 pub enum WEError {
     #[error("Key Encapsulation Error {0}")]
     KEMError(KEMError),
@@ -110,19 +110,20 @@ impl From<KEMError> for WEError {
 mod tests {
     use super::*;
     use crate::pol_op::evaluate_polynomial;
-    use ark_bls12_381::{Bls12_381, Fr, G1Projective, G2Projective};
+    use ark_bls12_381::{Bls12_381, Fr};
     use ark_std::test_rng;
     use ark_std::UniformRand;
+    use rand::Rng;
+
+    fn setup_kzg(rng: &mut impl Rng) -> KZG<Bls12_381> {
+        let secret = Fr::rand(rng);
+        KZG::<Bls12_381>::setup(secret, 10)
+    }
 
     #[test]
     fn test_encrypt_single() {
         let rng = &mut test_rng();
-        let g1_gen = G1Projective::rand(rng);
-        let g2_gen = G2Projective::rand(rng);
-        let secret = Fr::rand(rng);
-        let max_degree = 10;
-        let point: Fr = Fr::rand(rng);
-        let kzg = KZG::<Bls12_381>::setup(g1_gen, g2_gen, max_degree, secret);
+        let kzg = setup_kzg(rng);
         let we: WE<Bls12_381> = WE::new(kzg);
 
         // p(x) = 7 x^4 + 9 x^3 - 5 x^2 - 25 x - 24
@@ -133,6 +134,8 @@ mod tests {
             Fr::from(9),
             Fr::from(7),
         ];
+
+        let point: Fr = Fr::rand(rng);
         let val = evaluate_polynomial::<Bls12_381>(&p, &point);
         let commitment = we.kzg().commit(&p).unwrap();
 
@@ -150,12 +153,7 @@ mod tests {
     #[test]
     fn test_decrypt_single_invalid_proof() {
         let rng = &mut test_rng();
-        let g1_gen = G1Projective::rand(rng);
-        let g2_gen = G2Projective::rand(rng);
-        let secret = Fr::rand(rng);
-        let max_degree = 10;
-        let point: Fr = Fr::rand(rng);
-        let kzg = KZG::<Bls12_381>::setup(g1_gen, g2_gen, max_degree, secret);
+        let kzg = setup_kzg(rng);
         let we: WE<Bls12_381> = WE::new(kzg);
 
         // p(x) = 7 x^4 + 9 x^3 - 5 x^2 - 25 x - 24
@@ -166,6 +164,8 @@ mod tests {
             Fr::from(9),
             Fr::from(7),
         ];
+
+        let point: Fr = Fr::rand(rng);
         let val = evaluate_polynomial::<Bls12_381>(&p, &point);
         let commitment = we.kzg().commit(&p).unwrap();
 
@@ -183,11 +183,7 @@ mod tests {
     #[test]
     fn test_encrypt_decrypt_single() {
         let rng = &mut test_rng();
-        let g1_gen = G1Projective::rand(rng);
-        let g2_gen = G2Projective::rand(rng);
-        let secret = Fr::rand(rng);
-        let max_degree = 10;
-        let kzg = KZG::<Bls12_381>::setup(g1_gen, g2_gen, max_degree, secret);
+        let kzg = setup_kzg(rng);
         let we: WE<Bls12_381> = WE::new(kzg);
 
         let p = vec![

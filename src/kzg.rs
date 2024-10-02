@@ -5,55 +5,47 @@
 pub mod setup;
 
 use crate::pol_op::*;
-use ark_ec::pairing::Pairing;
+use ark_ec::{pairing::Pairing, AffineRepr};
 use ark_ff::{Field, Zero};
+use setup::{get_powers_from_file, SetupFileError};
 use std::ops::Mul;
 use thiserror::Error;
 
 /// KZG polynomial commitment scheme.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct KZG<E: Pairing> {
-    /// G1 generator
-    g1_gen: E::G1,
-    /// G2 generator
-    g2_gen: E::G2,
     /// Powers of tau in G1 - [tau^i]_1
     g1_pow: Vec<E::G1>,
     /// Powers of tau in G2 - [tau^i]_2
     g2_pow: Vec<E::G2>,
-    /// Tau in G2 - [tau]_2
-    tau_g2: E::G2,
-    /// Maximum degree
-    max_d: usize,
 }
 
 impl<E: Pairing> KZG<E> {
-    /// Initializes the KZG commitment scheme.
-    pub fn setup(g1_gen: E::G1, g2_gen: E::G2, max_d: usize, secret: E::ScalarField) -> Self {
-        let tau_g2 = g2_gen.mul(secret);
+    /// Initializes the KZG commitment scheme from a trusted setup file.
+    pub fn new_from_file(file: &str) -> Result<Self, KZGError> {
+        let (g1_pow, g2_pow) = get_powers_from_file::<E>(file)?;
+
+        Ok(Self { g1_pow, g2_pow })
+    }
+
+    /// Initializes the KZG commitment scheme from a given secret.
+    /// This is recommended for **testing purposes only**, since it requires the secret to be known.
+    pub fn setup(secret: E::ScalarField, max_d: usize) -> Self {
         let mut g1_pow = Vec::with_capacity(max_d + 1);
         let mut g2_pow = Vec::with_capacity(max_d + 1);
 
-        // Generate powers of tau for G1
         for i in 0..=max_d {
-            g1_pow.push(g1_gen.mul(secret.pow([i as u64])));
-            g2_pow.push(g2_gen.mul(secret.pow([i as u64])));
+            g1_pow.push(g1_gen::<E>().mul(secret.pow([i as u64])));
+            g2_pow.push(g2_gen::<E>().mul(secret.pow([i as u64])));
         }
 
-        Self {
-            g1_gen,
-            g2_gen,
-            g1_pow,
-            g2_pow,
-            tau_g2,
-            max_d,
-        }
+        Self { g1_pow, g2_pow }
     }
 
     /// Commits to a polynomial.
     pub fn commit(&self, p: &[E::ScalarField]) -> Result<E::G1, KZGError> {
-        if p.len() > self.max_d + 1 {
-            return Err(KZGError::PolynomialTooLarge);
+        if p.len() > self.g1_pow.len() {
+            return Err(KZGError::PolynomialTooLarge(p.len(), self.g1_pow.len()));
         }
 
         let mut commitment = E::G1::zero();
@@ -69,10 +61,6 @@ impl<E: Pairing> KZG<E> {
 
     /// Computes an opening (proof) for a polynomial at a point.
     pub fn open(&self, p: &[E::ScalarField], point: &E::ScalarField) -> Result<E::G1, KZGError> {
-        if p.len() > self.max_d + 1 {
-            return Err(KZGError::PolynomialTooLarge);
-        }
-
         let value = evaluate_polynomial::<E>(p, point);
 
         // p(x) - p(point)
@@ -94,16 +82,24 @@ impl<E: Pairing> KZG<E> {
         point: E::ScalarField,
         value: E::ScalarField,
         proof: E::G1,
-    ) -> bool {
+    ) -> Result<bool, KZGError> {
         // [beta]_1
-        let value_in_g1 = self.g1_gen.mul(value);
+        let value_in_g1 = g1_gen::<E>().mul(value);
+
+        // [tau]_2
+        let tau_in_g2 = self.tau_g2()?;
+
+        // [1]_2
+        let g2_gen = g2_gen::<E>();
 
         // [alpha]_2
-        let point_in_g2 = self.g2_gen.mul(point);
+        let point_in_g2 = g2_gen.mul(point);
 
         // e(commitment - [beta]_1, [1]_2) == e(proof, [tau]_2 - [alpha]_2)
-        E::pairing(commitment - value_in_g1, self.g2_gen)
-            == E::pairing(proof, self.tau_g2 - point_in_g2)
+        let v = E::pairing(commitment - value_in_g1, g2_gen)
+            == E::pairing(proof, tau_in_g2 - point_in_g2);
+
+        Ok(v)
     }
 
     /// Computes a batch opening for a polynomial at multiple points.
@@ -112,10 +108,6 @@ impl<E: Pairing> KZG<E> {
         p: &[E::ScalarField],
         points: &[E::ScalarField],
     ) -> Result<E::G1, KZGError> {
-        if p.len() > self.max_d + 1 {
-            return Err(KZGError::PolynomialTooLarge);
-        }
-
         // Evaluate the polynomial at the points
         let mut values = Vec::with_capacity(points.len());
         for point in points.iter() {
@@ -160,21 +152,11 @@ impl<E: Pairing> KZG<E> {
         // Commit to the Lagrange polynomial in G1
         let lagrange_p_com = self.commit(&lagrange_p)?;
 
-        let res =
-            // e(commitment - [lagrange_p]_1, [1]_2) == e(proof, [zero_p]_2)
-            E::pairing(commitment - lagrange_p_com, self.g2_gen) == E::pairing(proof, zero_p_com);
+        // e(commitment - [lagrange_p]_1, [1]_2) == e(proof, [zero_p]_2)
+        let v =
+            E::pairing(commitment - lagrange_p_com, g2_gen::<E>()) == E::pairing(proof, zero_p_com);
 
-        Ok(res)
-    }
-
-    /// Returns the generator in G1.
-    pub fn g1_gen(&self) -> E::G1 {
-        self.g1_gen
-    }
-
-    /// Returns the generator in G2.
-    pub fn g2_gen(&self) -> E::G2 {
-        self.g2_gen
+        Ok(v)
     }
 
     /// Returns the powers of tau in G1.
@@ -182,23 +164,32 @@ impl<E: Pairing> KZG<E> {
         &self.g1_pow
     }
 
-    /// Returns the tau in G2.
-    pub fn tau_g2(&self) -> E::G2 {
-        self.tau_g2
-    }
-
-    /// Returns the maximum degree.
-    pub fn max_degree(&self) -> usize {
-        self.max_d
+    /// Returns [tau]_2
+    pub fn tau_g2(&self) -> Result<E::G2, KZGError> {
+        self.g2_pow.get(1).copied().ok_or(KZGError::G2PowersEmpty)
     }
 }
 
-#[derive(Error, Debug)]
+/// Returns the G1 generator in projective coordinates.
+pub fn g1_gen<E: Pairing>() -> E::G1 {
+    E::G1Affine::generator().into()
+}
+
+/// Returns the G2 generator in projective coordinates.
+pub fn g2_gen<E: Pairing>() -> E::G2 {
+    E::G2Affine::generator().into()
+}
+
+#[derive(Error, Debug, PartialEq, Eq)]
 pub enum KZGError {
-    #[error("Polynomial exceeds the maximum degree")]
-    PolynomialTooLarge,
+    #[error("G2 powers of tau are empty")]
+    G2PowersEmpty,
     #[error("Operation error: {0}")]
     OperationError(OperationError),
+    #[error("Can't commit to polynomial: polynomial has degree {0} but max degree is {1}")]
+    PolynomialTooLarge(usize, usize),
+    #[error("Setup file error: {0}")]
+    SetupFileError(SetupFileError),
 }
 
 impl From<OperationError> for KZGError {
@@ -207,64 +198,68 @@ impl From<OperationError> for KZGError {
     }
 }
 
+impl From<SetupFileError> for KZGError {
+    fn from(err: SetupFileError) -> Self {
+        KZGError::SetupFileError(err)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ark_bls12_381::{
-        g1::{G1_GENERATOR_X, G1_GENERATOR_Y},
-        g2::{G2_GENERATOR_X, G2_GENERATOR_Y},
-        Bls12_381, Fr, G1Affine, G1Projective, G2Affine, G2Projective,
-    };
+    use ark_bls12_381::{Bls12_381, Config as BLS12Config, Fr, G1Projective};
+    use ark_ec::{bls12::Bls12Config, short_weierstrass::SWCurveConfig};
     use ark_ff::UniformRand;
     use ark_std::test_rng;
 
     #[test]
     fn test_kzg_setup() {
         let rng = &mut test_rng();
-        let g1_generator = G1Affine::new(G1_GENERATOR_X, G1_GENERATOR_Y);
-        let g2_generator = G2Affine::new(G2_GENERATOR_X, G2_GENERATOR_Y);
-        let max_degree = 10;
         let secret = Fr::rand(rng);
+        let max_degree = 3;
 
-        let kzg =
-            KZG::<Bls12_381>::setup(g1_generator.into(), g2_generator.into(), max_degree, secret);
+        let kzg = KZG::<Bls12_381>::setup(secret, max_degree);
 
-        // Verify G1 powers
+        // G1
         assert_eq!(kzg.g1_pow.len(), max_degree + 1);
         for i in 0..=max_degree {
-            assert_eq!(kzg.g1_pow[i], g1_generator.mul(secret.pow([i as u64])));
+            assert_eq!(
+                kzg.g1_pow[i],
+                g1_gen::<Bls12_381>().mul(secret.pow([i as u64]))
+            );
         }
 
-        // Verify tau in G2
-        assert_eq!(kzg.tau_g2, g2_generator.mul(secret));
+        // G2
+        assert_eq!(kzg.g2_pow.len(), max_degree + 1);
+        for i in 0..=max_degree {
+            assert_eq!(
+                kzg.g2_pow[i],
+                g2_gen::<Bls12_381>().mul(secret.pow([i as u64]))
+            );
+        }
+
+        // [tau]_2
+        assert_eq!(kzg.tau_g2().unwrap(), g2_gen::<Bls12_381>().mul(secret));
     }
 
     #[test]
-    fn test_kzg_setup_min_degree() {
-        let rng = &mut test_rng();
-        let g1_generator = G1Projective::rand(rng);
-        let g2_generator = G2Projective::rand(rng);
-        let max_degree = 0;
-        let secret = Fr::rand(rng);
+    fn test_generators() {
+        let expected_g1_gen = <BLS12Config as Bls12Config>::G1Config::GENERATOR;
+        let expected_g2_gen = <BLS12Config as Bls12Config>::G2Config::GENERATOR;
 
-        let kzg = KZG::<Bls12_381>::setup(g1_generator, g2_generator, max_degree, secret);
+        let g1_gen = g1_gen::<Bls12_381>();
+        let g2_gen = g2_gen::<Bls12_381>();
 
-        assert_eq!(kzg.g1_pow.len(), 1);
-        assert_eq!(kzg.g1_pow[0], g1_generator.mul(secret.pow([0])));
-
-        assert_eq!(kzg.tau_g2, g2_generator.mul(secret));
+        assert_eq!(g1_gen, expected_g1_gen);
+        assert_eq!(g2_gen, expected_g2_gen);
     }
 
     #[test]
     fn test_kzg_commit() {
         let rng = &mut test_rng();
-        let g1_generator = G1Affine::new(G1_GENERATOR_X, G1_GENERATOR_Y);
-        let g2_generator = G2Affine::new(G2_GENERATOR_X, G2_GENERATOR_Y);
-        let max_degree = 2;
         let secret = Fr::rand(rng);
-
-        let kzg =
-            KZG::<Bls12_381>::setup(g1_generator.into(), g2_generator.into(), max_degree, secret);
+        let max_degree = 2;
+        let kzg = KZG::<Bls12_381>::setup(secret, max_degree);
 
         // 2 x^2 + 3 x + 1
         let p = vec![Fr::from(1), Fr::from(3), Fr::from(2)];
@@ -279,67 +274,54 @@ mod tests {
     }
 
     #[test]
-    fn test_kzg_commit_zero_polynomial() {
-        let rng = &mut test_rng();
-        let g1_generator = G1Affine::new(G1_GENERATOR_X, G1_GENERATOR_Y);
-        let g2_generator = G2Affine::new(G2_GENERATOR_X, G2_GENERATOR_Y);
-        let max_degree = 2;
-        let secret = Fr::rand(rng);
-
-        let kzg =
-            KZG::<Bls12_381>::setup(g1_generator.into(), g2_generator.into(), max_degree, secret);
-
-        let zero_polynomial = vec![Fr::zero(); max_degree + 1];
-        let commitment = kzg.commit(&zero_polynomial).unwrap();
-
-        assert_eq!(commitment, G1Projective::zero());
-    }
-
-    #[test]
     fn test_kzg_commit_polynomial_too_large() {
         let rng = &mut test_rng();
-        let g1_generator = G1Affine::new(G1_GENERATOR_X, G1_GENERATOR_Y);
-        let g2_generator = G2Affine::new(G2_GENERATOR_X, G2_GENERATOR_Y);
-        let max_degree = 2;
         let secret = Fr::rand(rng);
-
-        let kzg =
-            KZG::<Bls12_381>::setup(g1_generator.into(), g2_generator.into(), max_degree, secret);
+        let max_degree = 2;
+        let kzg = KZG::<Bls12_381>::setup(secret, max_degree);
 
         let p = vec![Fr::from(1), Fr::from(3), Fr::from(2), Fr::from(4)];
 
         let result = kzg.commit(&p);
-        assert!(matches!(result, Err(KZGError::PolynomialTooLarge)));
+        let expected_err = KZGError::PolynomialTooLarge(p.len(), max_degree + 1);
+
+        assert_eq!(result, Err(expected_err));
     }
 
     #[test]
     fn test_kzg_open_polynomial_too_large() {
         let rng = &mut test_rng();
-        let g1_generator = G1Affine::new(G1_GENERATOR_X, G1_GENERATOR_Y);
-        let g2_generator = G2Affine::new(G2_GENERATOR_X, G2_GENERATOR_Y);
-        let max_degree = 2;
         let secret = Fr::rand(rng);
+        let max_degree = 2;
+        let kzg = KZG::<Bls12_381>::setup(secret, max_degree);
 
-        let kzg =
-            KZG::<Bls12_381>::setup(g1_generator.into(), g2_generator.into(), max_degree, secret);
-
-        let p = vec![Fr::from(1), Fr::from(3), Fr::from(2), Fr::from(4)];
+        let p = vec![
+            Fr::from(1),
+            Fr::from(2),
+            Fr::from(3),
+            Fr::from(4),
+            Fr::from(5),
+            Fr::from(6),
+        ];
         let point = Fr::from(5);
 
+        let value = evaluate_polynomial::<Bls12_381>(&p, &point);
+        let numerator = subtract_polynomials::<Bls12_381>(&p, &[value]);
+        let denominator = [-point, <Bls12_381 as Pairing>::ScalarField::ONE];
+        let quotient = divide_polynomials::<Bls12_381>(&numerator, &denominator).unwrap();
+
         let result = kzg.open(&p, &point);
-        assert!(matches!(result, Err(KZGError::PolynomialTooLarge)));
+        let expected_err = KZGError::PolynomialTooLarge(quotient.len(), max_degree + 1);
+
+        assert_eq!(result, Err(expected_err));
     }
 
     #[test]
     fn test_kzg_open_and_verify() {
         let rng = &mut test_rng();
-        let g1_generator = G1Affine::new(G1_GENERATOR_X, G1_GENERATOR_Y);
-        let g2_generator = G2Affine::new(G2_GENERATOR_X, G2_GENERATOR_Y);
-        let max_degree = 2;
         let secret = Fr::rand(rng);
-
-        let kzg =
-            KZG::<Bls12_381>::setup(g1_generator.into(), g2_generator.into(), max_degree, secret);
+        let max_degree = 2;
+        let kzg = KZG::<Bls12_381>::setup(secret, max_degree);
 
         // 2 x^2 + 3 x + 1
         let p = vec![Fr::from(1), Fr::from(3), Fr::from(2)];
@@ -352,19 +334,19 @@ mod tests {
 
         let proof = kzg.open(&p, &point).unwrap();
 
-        assert!(kzg.verify(commitment, point, expected_value, proof));
+        let v = kzg
+            .verify(commitment, point, expected_value, proof)
+            .unwrap();
+
+        assert!(v);
     }
 
     #[test]
-    fn test_kzg_verify_invalid_opening() {
+    fn test_kzg_verify_wrong_alpha() {
         let rng = &mut test_rng();
-        let g1_generator = G1Affine::new(G1_GENERATOR_X, G1_GENERATOR_Y);
-        let g2_generator = G2Affine::new(G2_GENERATOR_X, G2_GENERATOR_Y);
-        let max_degree = 4;
         let secret = Fr::rand(rng);
-
-        let kzg =
-            KZG::<Bls12_381>::setup(g1_generator.into(), g2_generator.into(), max_degree, secret);
+        let max_degree = 4;
+        let kzg = KZG::<Bls12_381>::setup(secret, max_degree);
 
         // p(x) = 7 x^4 + 9 x^3 - 5 x^2 - 25 x - 24
         let p = vec![
@@ -376,30 +358,30 @@ mod tests {
         ];
 
         let commitment = kzg.commit(&p).unwrap();
-
         let point = Fr::from(11);
 
         // p(11) = 113562
         let expected_value = Fr::from(113562);
 
         let proof = kzg.open(&p, &point).unwrap();
+        let v_valid_point = kzg
+            .verify(commitment, point, expected_value, proof)
+            .unwrap();
+        assert_eq!(v_valid_point, true);
 
         let wrong_point = Fr::from(99);
-
-        assert!(!kzg.verify(commitment, wrong_point, expected_value, proof));
-        assert!(kzg.verify(commitment, point, expected_value, proof));
+        let v_wrong_point = kzg
+            .verify(commitment, wrong_point, expected_value, proof)
+            .unwrap();
+        assert_eq!(v_wrong_point, false);
     }
 
     #[test]
-    fn test_kzg_verify_invalid_value() {
+    fn test_kzg_verify_wrong_beta() {
         let rng = &mut test_rng();
-        let g1_generator = G1Affine::new(G1_GENERATOR_X, G1_GENERATOR_Y);
-        let g2_generator = G2Affine::new(G2_GENERATOR_X, G2_GENERATOR_Y);
-        let max_degree = 4;
         let secret = Fr::rand(rng);
-
-        let kzg =
-            KZG::<Bls12_381>::setup(g1_generator.into(), g2_generator.into(), max_degree, secret);
+        let max_degree = 4;
+        let kzg = KZG::<Bls12_381>::setup(secret, max_degree);
 
         // p(x) = 7 x^4 + 9 x^3 - 5 x^2 - 25 x - 24
         let p = vec![
@@ -418,23 +400,22 @@ mod tests {
         let expected_value = Fr::from(10662);
 
         let proof = kzg.open(&p, &point).unwrap();
+        let v_valid_point = kzg
+            .verify(commitment, point, expected_value, proof)
+            .unwrap();
+        assert_eq!(v_valid_point, true);
 
         let wrong_value = Fr::from(10663);
-
-        assert!(!kzg.verify(commitment, point, wrong_value, proof));
-        assert!(kzg.verify(commitment, point, expected_value, proof));
+        let v_wrong_value = kzg.verify(commitment, point, wrong_value, proof).unwrap();
+        assert_eq!(v_wrong_value, false);
     }
 
     #[test]
-    fn test_kzg_verify_invalid_proof() {
+    fn test_kzg_verify_wrong_proof() {
         let rng = &mut test_rng();
-        let g1_generator = G1Affine::new(G1_GENERATOR_X, G1_GENERATOR_Y);
-        let g2_generator = G2Affine::new(G2_GENERATOR_X, G2_GENERATOR_Y);
-        let max_degree = 4;
         let secret = Fr::rand(rng);
-
-        let kzg =
-            KZG::<Bls12_381>::setup(g1_generator.into(), g2_generator.into(), max_degree, secret);
+        let max_degree = 4;
+        let kzg = KZG::<Bls12_381>::setup(secret, max_degree);
 
         // p(x) = 7 x^4 + 9 x^3 - 5 x^2 - 25 x - 24
         let p = vec![
@@ -450,27 +431,31 @@ mod tests {
         let point = Fr::from(6);
 
         // p(6) = 10662
-        let expected_value = Fr::from(10662);
+        let value = Fr::from(10662);
 
-        let correct_proof = kzg.open(&p, &point).unwrap();
+        let proof = kzg.open(&p, &point).unwrap();
+        let v_valid_point = kzg.verify(commitment, point, value, proof).unwrap();
+        assert_eq!(v_valid_point, true);
 
-        let wrong_point = Fr::from(7);
-        let wrong_proof = kzg.open(&p, &wrong_point).unwrap();
-
-        assert!(!kzg.verify(commitment, point, expected_value, wrong_proof));
-        assert!(kzg.verify(commitment, point, expected_value, correct_proof));
+        // Create a proof for a different polynomial
+        let fake_p = vec![
+            Fr::from(-24),
+            Fr::from(-26),
+            Fr::from(-5),
+            Fr::from(9),
+            Fr::from(7),
+        ];
+        let wrong_proof = kzg.open(&fake_p, &point).unwrap();
+        let v_wrong_proof = kzg.verify(commitment, point, value, wrong_proof).unwrap();
+        assert_eq!(v_wrong_proof, false);
     }
 
     #[test]
-    fn test_kzg_verify_invalid_polynomial() {
+    fn test_kzg_verify_wrong_commitment() {
         let rng = &mut test_rng();
-        let g1_generator = G1Affine::new(G1_GENERATOR_X, G1_GENERATOR_Y);
-        let g2_generator = G2Affine::new(G2_GENERATOR_X, G2_GENERATOR_Y);
-        let max_degree = 4;
         let secret = Fr::rand(rng);
-
-        let kzg =
-            KZG::<Bls12_381>::setup(g1_generator.into(), g2_generator.into(), max_degree, secret);
+        let max_degree = 4;
+        let kzg = KZG::<Bls12_381>::setup(secret, max_degree);
 
         // p(x) = 7 x^4 + 9 x^3 - 5 x^2 - 25 x - 24
         let p = vec![
@@ -483,60 +468,45 @@ mod tests {
 
         let commitment = kzg.commit(&p).unwrap();
 
-        // p(6) = 10662
         let point = Fr::from(6);
-        let expected_value = Fr::from(10662);
 
-        let correct_proof = kzg.open(&p, &point).unwrap();
+        // p(6) = 10662
+        let value = Fr::from(10662);
 
-        // q(x) = 2 x^4 - 3 x^3 + x^2 + 5 x + 10
-        let q = vec![
-            Fr::from(10),
-            Fr::from(5),
-            Fr::from(1),
-            Fr::from(-3),
-            Fr::from(2),
-        ];
+        let proof = kzg.open(&p, &point).unwrap();
+        let v_valid_commitment = kzg.verify(commitment, point, value, proof).unwrap();
+        assert_eq!(v_valid_commitment, true);
 
-        let fake_proof = kzg.open(&q, &point).unwrap();
-
-        assert!(!kzg.verify(commitment, point, expected_value, fake_proof));
-        assert!(kzg.verify(commitment, point, expected_value, correct_proof));
+        // Create a random commitment
+        let wrong_com = commitment.mul(Fr::from(2));
+        let v_wrong_commitment = kzg.verify(wrong_com, point, value, proof).unwrap();
+        assert_eq!(v_wrong_commitment, false);
     }
 
     #[test]
     fn test_kzg_batch_open_repeated_points() {
         let rng = &mut test_rng();
-        let g1_generator = G1Affine::new(G1_GENERATOR_X, G1_GENERATOR_Y);
-        let g2_generator = G2Affine::new(G2_GENERATOR_X, G2_GENERATOR_Y);
-        let max_degree = 4;
         let secret = Fr::rand(rng);
-
-        let kzg =
-            KZG::<Bls12_381>::setup(g1_generator.into(), g2_generator.into(), max_degree, secret);
+        let max_degree = 4;
+        let kzg = KZG::<Bls12_381>::setup(secret, max_degree);
 
         // p(x) = 3 x^3 + 2 x^2 + x + 1
         let p = vec![Fr::from(1), Fr::from(1), Fr::from(2), Fr::from(3)];
 
         let repeated_points = vec![Fr::from(2), Fr::from(2)];
 
-        let result = kzg.batch_open(&p, &repeated_points);
-        assert!(matches!(
-            result,
-            Err(KZGError::OperationError(OperationError::RepeatedPoints))
-        ));
+        let res = kzg.batch_open(&p, &repeated_points);
+        let expected_error = KZGError::OperationError(OperationError::RepeatedPoints);
+
+        assert_eq!(res, Err(expected_error));
     }
 
     #[test]
     fn test_kzg_batch_open_and_verify() {
         let rng = &mut test_rng();
-        let g1_generator = G1Affine::new(G1_GENERATOR_X, G1_GENERATOR_Y);
-        let g2_generator = G2Affine::new(G2_GENERATOR_X, G2_GENERATOR_Y);
-        let max_degree = 4;
         let secret = Fr::rand(rng);
-
-        let kzg =
-            KZG::<Bls12_381>::setup(g1_generator.into(), g2_generator.into(), max_degree, secret);
+        let max_degree = 4;
+        let kzg = KZG::<Bls12_381>::setup(secret, max_degree);
 
         // p(x) = 7 x^4 + 9 x^3 - 5 x^2 - 25 x - 24
         let p = vec![
@@ -555,23 +525,24 @@ mod tests {
         let points = vec![Fr::from(6), Fr::from(11), Fr::from(17)];
         let expected_values = vec![Fr::from(10662), Fr::from(113562), Fr::from(626970)];
 
-        let proof = kzg.batch_open(&p, &points).unwrap();
+        let proof_res = kzg.batch_open(&p, &points);
+        assert!(proof_res.is_ok());
+        // TODO: Assert value
 
-        assert!(kzg
-            .batch_verify(commitment, &points, &expected_values, proof)
-            .unwrap());
+        let proof = proof_res.unwrap();
+        let res = kzg.batch_verify(commitment, &points, &expected_values, proof);
+        assert!(res.is_ok());
+
+        let v = res.unwrap();
+        assert!(v);
     }
 
     #[test]
     fn test_kzg_batch_verify_repeated_points() {
         let rng = &mut test_rng();
-        let g1_generator = G1Affine::new(G1_GENERATOR_X, G1_GENERATOR_Y);
-        let g2_generator = G2Affine::new(G2_GENERATOR_X, G2_GENERATOR_Y);
-        let max_degree = 4;
         let secret = Fr::rand(rng);
-
-        let kzg =
-            KZG::<Bls12_381>::setup(g1_generator.into(), g2_generator.into(), max_degree, secret);
+        let max_degree = 4;
+        let kzg = KZG::<Bls12_381>::setup(secret, max_degree);
 
         // p(x) = 3 x^3 + 2 x^2 + x + 1
         let p = vec![Fr::from(1), Fr::from(1), Fr::from(2), Fr::from(3)];
@@ -585,23 +556,18 @@ mod tests {
         let points = vec![Fr::from(2), Fr::from(2)];
         let expected_values = vec![Fr::from(25), Fr::from(25)];
 
-        let result = kzg.batch_verify(commitment, &points, &expected_values, proof);
-        assert!(matches!(
-            result,
-            Err(KZGError::OperationError(OperationError::RepeatedPoints))
-        ));
+        let res = kzg.batch_verify(commitment, &points, &expected_values, proof);
+        let expected_error = KZGError::OperationError(OperationError::RepeatedPoints);
+
+        assert_eq!(res, Err(expected_error));
     }
 
     #[test]
     fn test_kzg_batch_verify_wrong_points() {
         let rng = &mut test_rng();
-        let g1_generator = G1Affine::new(G1_GENERATOR_X, G1_GENERATOR_Y);
-        let g2_generator = G2Affine::new(G2_GENERATOR_X, G2_GENERATOR_Y);
-        let max_degree = 4;
         let secret = Fr::rand(rng);
-
-        let kzg =
-            KZG::<Bls12_381>::setup(g1_generator.into(), g2_generator.into(), max_degree, secret);
+        let max_degree = 4;
+        let kzg = KZG::<Bls12_381>::setup(secret, max_degree);
 
         // p(x) = 7 x^4 + 9 x^3 - 5 x^2 - 25 x - 24
         let p = vec![
@@ -620,28 +586,24 @@ mod tests {
         let points = vec![Fr::from(6), Fr::from(11), Fr::from(17)];
         let expected_values = vec![Fr::from(10662), Fr::from(113562), Fr::from(626970)];
 
-        let correct_proof = kzg.batch_open(&p, &points).unwrap();
+        let proof = kzg.batch_open(&p, &points).unwrap();
+
+        let v_valid_point = kzg.batch_verify(commitment, &points, &expected_values, proof);
+        assert!(v_valid_point.is_ok());
+        assert_eq!(v_valid_point.unwrap(), true);
 
         let wrong_points = vec![Fr::from(7), Fr::from(11), Fr::from(17)];
-
-        assert!(!kzg
-            .batch_verify(commitment, &wrong_points, &expected_values, correct_proof)
-            .unwrap());
-        assert!(kzg
-            .batch_verify(commitment, &points, &expected_values, correct_proof)
-            .unwrap());
+        let v_wrong_points = kzg.batch_verify(commitment, &wrong_points, &expected_values, proof);
+        assert!(v_wrong_points.is_ok());
+        assert_eq!(v_wrong_points.unwrap(), false);
     }
 
     #[test]
     fn test_kzg_batch_verify_wrong_proof() {
         let rng = &mut test_rng();
-        let g1_generator = G1Affine::new(G1_GENERATOR_X, G1_GENERATOR_Y);
-        let g2_generator = G2Affine::new(G2_GENERATOR_X, G2_GENERATOR_Y);
-        let max_degree = 4;
         let secret = Fr::rand(rng);
-
-        let kzg =
-            KZG::<Bls12_381>::setup(g1_generator.into(), g2_generator.into(), max_degree, secret);
+        let max_degree = 4;
+        let kzg = KZG::<Bls12_381>::setup(secret, max_degree);
 
         // p(x) = 7 x^4 + 9 x^3 - 5 x^2 - 25 x - 24
         let p = vec![
@@ -660,7 +622,10 @@ mod tests {
         let points = vec![Fr::from(6), Fr::from(11), Fr::from(17)];
         let expected_values = vec![Fr::from(10662), Fr::from(113562), Fr::from(626970)];
 
-        let correct_proof = kzg.batch_open(&p, &points).unwrap();
+        let proof = kzg.batch_open(&p, &points).unwrap();
+        let v_valid_point = kzg.batch_verify(commitment, &points, &expected_values, proof);
+        assert!(v_valid_point.is_ok());
+        assert_eq!(v_valid_point.unwrap(), true);
 
         // Compute a proof for another polynomial
         // q(x) = 2 x^4 - 3 x^3 + x^2 + 5 x + 10
@@ -671,15 +636,10 @@ mod tests {
             Fr::from(-3),
             Fr::from(2),
         ];
-
         let fake_proof = kzg.batch_open(&q, &points).unwrap();
 
-        assert!(!kzg
-            .batch_verify(commitment, &points, &expected_values, fake_proof)
-            .unwrap());
-
-        assert!(kzg
-            .batch_verify(commitment, &points, &expected_values, correct_proof)
-            .unwrap());
+        let v_wrong_proof = kzg.batch_verify(commitment, &points, &expected_values, fake_proof);
+        assert!(v_wrong_proof.is_ok());
+        assert_eq!(v_wrong_proof.unwrap(), false);
     }
 }

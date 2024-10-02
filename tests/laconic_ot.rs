@@ -29,7 +29,7 @@ impl<E: Pairing> OTReceiver<E> {
     /// Commits to a selection polynomial.
     pub fn commit(&self) -> Result<E::G1, KZGError> {
         let selection_polynomial =
-            get_selection_polynomial::<E>(self.selection, self.we.kzg().max_degree());
+            get_selection_polynomial::<E>(self.selection, self.we.kzg().g1_pow().len());
 
         self.we.kzg().commit(&selection_polynomial)
     }
@@ -40,7 +40,7 @@ impl<E: Pairing> OTReceiver<E> {
         encrypted_messages: Vec<(E::G2, Vec<u8>)>,
     ) -> Result<Vec<Vec<u8>>, WEError> {
         let selection_polynomial =
-            get_selection_polynomial::<E>(self.selection, self.we.kzg().max_degree());
+            get_selection_polynomial::<E>(self.selection, self.we.kzg().g1_pow().len());
 
         // Generate proof
         let proof = self
@@ -93,7 +93,7 @@ impl<E: Pairing> OTSender<E> {
 
             // Evaluate the polynomial
             let selection_polynomial =
-                get_selection_polynomial::<E>(index, self.we.kzg().max_degree());
+                get_selection_polynomial::<E>(index, self.we.kzg().g1_pow().len());
             let evaluation = evaluate_polynomial::<E>(
                 &selection_polynomial,
                 &E::ScalarField::from(index as u64),
@@ -126,31 +126,18 @@ fn get_selection_polynomial<E: Pairing>(
 #[cfg(test)]
 mod laconic_ot_tests {
     use super::*;
-    use ark_bls12_381::{
-        g1::{G1_GENERATOR_X, G1_GENERATOR_Y},
-        g2::{G2_GENERATOR_X, G2_GENERATOR_Y},
-        Bls12_381, Fr, G1Affine, G2Affine,
-    };
+    use ark_bls12_381::{Bls12_381, Fr};
     use ark_std::{test_rng, UniformRand};
     use keaki::{kzg::KZG, we::WE};
     use rand::Rng;
 
     const MAX_DEGREE: usize = 4;
 
-    /// Setups the KZG instance.
-    fn setup_kzg() -> KZG<Bls12_381> {
-        let rng = &mut test_rng();
-        let g1_generator = G1Affine::new(G1_GENERATOR_X, G1_GENERATOR_Y);
-        let g2_generator = G2Affine::new(G2_GENERATOR_X, G2_GENERATOR_Y);
-        let secret = Fr::rand(rng);
-
-        KZG::setup(g1_generator.into(), g2_generator.into(), MAX_DEGREE, secret)
-    }
-
     #[test]
     fn test_laconic_ot() {
         let rng = &mut test_rng();
-        let kzg = setup_kzg();
+        let secret = Fr::rand(rng);
+        let kzg = KZG::<Bls12_381>::setup(secret, MAX_DEGREE);
         let we: WE<Bls12_381> = WE::new(kzg);
 
         // --------------------
