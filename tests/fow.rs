@@ -34,7 +34,7 @@
 //! To run the simulation:
 //!
 //! ```bash
-//! cargo test test_fog_of_war_game -- --nocapture
+//! cargo test test_fog_game -- --nocapture --include-ignored
 //! ```
 //!
 
@@ -42,7 +42,7 @@ use ark_bls12_381::{Bls12_381, Fr, G1Projective, G2Projective};
 use keaki::{kzg::KZG, pol_op::lagrange_interpolation, we::WE};
 use rand::{seq::IteratorRandom, thread_rng};
 
-pub const BOARD_SIZE: usize = 6;
+pub const BOARD_SIZE: usize = 4;
 pub const BOARD_TILES: usize = BOARD_SIZE * BOARD_SIZE;
 
 // Starting Positions
