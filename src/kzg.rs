@@ -208,8 +208,7 @@ impl From<SetupFileError> for KZGError {
 mod tests {
     use super::*;
     use ark_bls12_381::{Bls12_381, Config as BLS12Config, Fr, G1Projective};
-    use ark_ec::bls12::Bls12Config;
-    use ark_ec::short_weierstrass::SWCurveConfig;
+    use ark_ec::{bls12::Bls12Config, short_weierstrass::SWCurveConfig};
     use ark_ff::UniformRand;
     use ark_std::test_rng;
 

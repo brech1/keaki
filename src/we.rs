@@ -113,13 +113,17 @@ mod tests {
     use ark_bls12_381::{Bls12_381, Fr};
     use ark_std::test_rng;
     use ark_std::UniformRand;
+    use rand::Rng;
+
+    fn setup_kzg(rng: &mut impl Rng) -> KZG<Bls12_381> {
+        let secret = Fr::rand(rng);
+        KZG::<Bls12_381>::setup(secret, 10)
+    }
 
     #[test]
     fn test_encrypt_single() {
         let rng = &mut test_rng();
-        let secret = Fr::rand(rng);
-        let max_degree = 10;
-        let kzg = KZG::<Bls12_381>::setup(secret, max_degree);
+        let kzg = setup_kzg(rng);
         let we: WE<Bls12_381> = WE::new(kzg);
 
         // p(x) = 7 x^4 + 9 x^3 - 5 x^2 - 25 x - 24
@@ -149,9 +153,7 @@ mod tests {
     #[test]
     fn test_decrypt_single_invalid_proof() {
         let rng = &mut test_rng();
-        let secret = Fr::rand(rng);
-        let max_degree = 10;
-        let kzg = KZG::<Bls12_381>::setup(secret, max_degree);
+        let kzg = setup_kzg(rng);
         let we: WE<Bls12_381> = WE::new(kzg);
 
         // p(x) = 7 x^4 + 9 x^3 - 5 x^2 - 25 x - 24
@@ -181,9 +183,7 @@ mod tests {
     #[test]
     fn test_encrypt_decrypt_single() {
         let rng = &mut test_rng();
-        let secret = Fr::rand(rng);
-        let max_degree = 10;
-        let kzg = KZG::<Bls12_381>::setup(secret, max_degree);
+        let kzg = setup_kzg(rng);
         let we: WE<Bls12_381> = WE::new(kzg);
 
         let p = vec![

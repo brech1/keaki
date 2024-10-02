@@ -135,17 +135,19 @@ impl From<KZGError> for KEMError {
 mod tests {
     use super::*;
     use crate::pol_op::evaluate_polynomial;
-    use ark_bls12_381::G1Projective;
-    use ark_bls12_381::{Bls12_381, Fr};
-    use ark_std::test_rng;
-    use ark_std::UniformRand;
+    use ark_bls12_381::{Bls12_381, Fr, G1Projective};
+    use ark_std::{test_rng, UniformRand};
+    use rand::Rng;
+
+    fn setup_kzg(rng: &mut impl Rng) -> KZG<Bls12_381> {
+        let secret = Fr::rand(rng);
+        KZG::<Bls12_381>::setup(secret, 10)
+    }
 
     #[test]
     fn test_encapsulation_decapsulation() {
         let rng = &mut test_rng();
-        let secret = Fr::rand(rng);
-        let max_degree = 10;
-        let kzg = KZG::<Bls12_381>::setup(secret, max_degree);
+        let kzg = setup_kzg(rng);
 
         // p(x) = 7 x^4 + 9 x^3 - 5 x^2 - 25 x - 24
         let p = vec![
@@ -178,9 +180,7 @@ mod tests {
     #[test]
     fn test_decapsulation_invalid_proof() {
         let rng = &mut test_rng();
-        let secret = Fr::rand(rng);
-        let max_degree = 10;
-        let kzg = KZG::<Bls12_381>::setup(secret, max_degree);
+        let kzg = setup_kzg(rng);
 
         // p(x) = 7 x^4 + 9 x^3 - 5 x^2 - 25 x - 24
         let p = vec![
@@ -223,9 +223,7 @@ mod tests {
     #[test]
     fn test_decapsulation_invalid_ciphertext() {
         let rng = &mut test_rng();
-        let secret = Fr::rand(rng);
-        let max_degree = 10;
-        let kzg = KZG::<Bls12_381>::setup(secret, max_degree);
+        let kzg = setup_kzg(rng);
 
         // p(x) = 7 x^4 + 9 x^3 - 5 x^2 - 25 x - 24
         let p = vec![
@@ -262,9 +260,7 @@ mod tests {
     #[test]
     fn test_decapsulation_wrong_point() {
         let rng = &mut test_rng();
-        let secret = Fr::rand(rng);
-        let max_degree = 10;
-        let kzg = KZG::<Bls12_381>::setup(secret, max_degree);
+        let kzg = setup_kzg(rng);
 
         // p(x) = 7 x^4 + 9 x^3 - 5 x^2 - 25 x - 24
         let p = vec![
@@ -301,9 +297,7 @@ mod tests {
     #[test]
     fn test_encapsulate_decapsulate_set() {
         let rng = &mut test_rng();
-        let secret = Fr::rand(rng);
-        let max_degree = 10;
-        let kzg = KZG::<Bls12_381>::setup(secret, max_degree);
+        let kzg = setup_kzg(rng);
 
         // Define the polynomial p(x) = 7 x^4 + 9 x^3 - 5 x^2 - 25 x - 24
         let p = vec![

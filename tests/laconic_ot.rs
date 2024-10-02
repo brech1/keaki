@@ -133,18 +133,11 @@ mod laconic_ot_tests {
 
     const MAX_DEGREE: usize = 4;
 
-    /// Setups the KZG instance.
-    fn setup_kzg() -> KZG<Bls12_381> {
-        let rng = &mut test_rng();
-        let secret = Fr::rand(rng);
-
-        KZG::<Bls12_381>::setup(secret, MAX_DEGREE)
-    }
-
     #[test]
     fn test_laconic_ot() {
         let rng = &mut test_rng();
-        let kzg = setup_kzg();
+        let secret = Fr::rand(rng);
+        let kzg = KZG::<Bls12_381>::setup(secret, MAX_DEGREE);
         let we: WE<Bls12_381> = WE::new(kzg);
 
         // --------------------
