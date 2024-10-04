@@ -22,7 +22,6 @@ pub type CiphertextTuple<E> = (Ciphertext<E>, Ciphertext<E>);
 pub struct Receiver<E: Pairing> {
     we: WE<E>,
     boolean_choices: Vec<E::ScalarField>,
-    selection_polynomial: Vec<E::ScalarField>,
     commitment: E::G1,
     proofs: Vec<E::G1>, // New field to store precomputed proofs
 }
