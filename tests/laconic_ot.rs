@@ -150,9 +150,8 @@ impl<E: Pairing> Sender<E> {
 mod new_laconic_ot_tests {
     use super::*;
     use ark_bls12_381::{Bls12_381, Fr};
-    use ark_std::{test_rng, UniformRand};
+    use ark_std::{rand::Rng, test_rng, UniformRand};
     use keaki::{kzg::KZG, we::WE};
-    use rand::Rng;
 
     const MAX_DEGREE: usize = 32;
     const NUM_OT_VALUES: usize = 32;

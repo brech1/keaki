@@ -8,6 +8,7 @@ use crate::{
     kzg::KZG,
 };
 use ark_ec::pairing::Pairing;
+use ark_std::vec::Vec;
 use thiserror::Error;
 
 /// Extractable Witness Encryption struct.
@@ -111,9 +112,7 @@ mod tests {
     use super::*;
     use crate::pol_op::evaluate_polynomial;
     use ark_bls12_381::{Bls12_381, Fr};
-    use ark_std::test_rng;
-    use ark_std::UniformRand;
-    use rand::Rng;
+    use ark_std::{rand::Rng, test_rng, UniformRand};
 
     fn setup_kzg(rng: &mut impl Rng) -> KZG<Bls12_381> {
         let secret = Fr::rand(rng);
