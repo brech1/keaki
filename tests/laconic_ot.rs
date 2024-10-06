@@ -67,7 +67,6 @@ impl<E: Pairing> Receiver<E> {
             we,
             boolean_choices,
             commitment,
-            selection_polynomial,
             proofs, // Store the precomputed proofs
         }
     }
