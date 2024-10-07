@@ -5,14 +5,10 @@
 //! The only supported format is the Snark JS `ptau` trusted setup file format.
 
 #![allow(clippy::type_complexity)]
-
 use ark_ec::{pairing::Pairing, AffineRepr};
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize, Compress};
-use std::{
-    fs::File,
-    io::{Cursor, Read},
-    path::PathBuf,
-};
+use ark_std::{io::Cursor, vec::Vec};
+use std::{fs::File, io::Read, path::PathBuf};
 use thiserror::Error;
 
 /// Header file type.

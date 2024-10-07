@@ -4,7 +4,7 @@
 
 use ark_ec::pairing::Pairing;
 use ark_ff::{Field, One, Zero};
-use std::collections::HashSet;
+use ark_std::vec::Vec;
 use thiserror::Error;
 
 /// Subtracts two polynomials.
@@ -126,7 +126,7 @@ pub fn lagrange_interpolation<E: Pairing>(
 ) -> Result<Vec<E::ScalarField>, OperationError> {
     let points_n = points.len();
     let mut result = vec![E::ScalarField::zero(); points_n];
-    let mut seen_points = HashSet::with_capacity(points_n);
+    let mut seen_points = Vec::with_capacity(points_n);
 
     // Check for a mismatch between the number of points and values
     if points_n != values.len() {
@@ -135,9 +135,10 @@ pub fn lagrange_interpolation<E: Pairing>(
 
     // Check for repeated points
     for point in points {
-        if !seen_points.insert(point) {
+        if seen_points.iter().any(|&p| p == *point) {
             return Err(OperationError::RepeatedPoints);
         }
+        seen_points.push(*point);
     }
 
     for j in 0..points_n {

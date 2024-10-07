@@ -7,8 +7,8 @@ pub mod setup;
 use crate::pol_op::*;
 use ark_ec::{pairing::Pairing, AffineRepr};
 use ark_ff::{Field, Zero};
+use ark_std::{ops::Mul, vec::Vec};
 use setup::{get_powers_from_file, SetupFileError};
-use std::ops::Mul;
 use thiserror::Error;
 
 /// KZG polynomial commitment scheme.

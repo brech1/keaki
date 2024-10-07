@@ -5,10 +5,9 @@
 use crate::kzg::{g1_gen, g2_gen, KZGError, KZG};
 use ark_ec::pairing::Pairing;
 use ark_serialize::CanonicalSerialize;
-use ark_std::{rand, UniformRand};
+use ark_std::{ops::Mul, vec::Vec, UniformRand};
 use blake3::OutputReader;
-use rand::thread_rng;
-use std::ops::Mul;
+use rand::{rngs::SmallRng, SeedableRng};
 use thiserror::Error;
 
 /// Encapsulation.
@@ -27,7 +26,7 @@ pub fn encapsulate<E: Pairing>(
 
     // Generate a random value
     // This allows the generated secret not to be tied to the inputs.
-    let mut rng = thread_rng();
+    let mut rng = SmallRng::from_entropy();
     let r = E::ScalarField::rand(&mut rng);
 
     // Calculate secret
@@ -136,8 +135,7 @@ mod tests {
     use super::*;
     use crate::pol_op::evaluate_polynomial;
     use ark_bls12_381::{Bls12_381, Fr, G1Projective};
-    use ark_std::{test_rng, UniformRand};
-    use rand::Rng;
+    use ark_std::{rand::Rng, test_rng};
 
     fn setup_kzg(rng: &mut impl Rng) -> KZG<Bls12_381> {
         let secret = Fr::rand(rng);

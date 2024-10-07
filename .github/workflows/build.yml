@@ -28,11 +28,16 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-cargo-
 
-      - name: Install Rust
-        run: rustup toolchain install stable
+      - name: Install Rust and wasm32 target
+        run: |
+          rustup toolchain install stable
+          rustup target add wasm32-unknown-unknown
 
       - name: Build
         run: cargo build --verbose
+
+      - name: Build wasm32
+        run: cargo build --target wasm32-unknown-unknown --verbose
 
       - name: Clippy
         run: cargo clippy --verbose -- -D warnings
