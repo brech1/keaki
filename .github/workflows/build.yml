@@ -42,3 +42,28 @@ jobs:
 
       - name: Fmt
         run: cargo fmt -- --check
+
+  build-wasm:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v3
+
+      - uses: actions/cache@v3
+        with:
+          path: |
+            ~/.cargo
+            ~/.rustup/toolchains
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
+
+      - name: Install Rust for wasm32
+        run: rustup target add wasm32-unknown-unknown
+
+      - name: Build for wasm32-unknown-unknown
+        run: cargo build --target wasm32-unknown-unknown --verbose
+
+      - name: Tests for wasm32
+        run: cargo test --target wasm32-unknown-unknown --verbose
