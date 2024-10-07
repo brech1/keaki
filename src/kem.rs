@@ -120,8 +120,6 @@ pub enum KEMError {
     EncapsulationInputsLengthError,
     #[error("KZG error: {0}")]
     KZGError(KZGError),
-    #[error("Randomness generation failed: {0}")]
-    RandomnessGenerationError(String),
     #[error("Secret serialization failed {0}")]
     SerializationError(String),
 }
