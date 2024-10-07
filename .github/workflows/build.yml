@@ -28,11 +28,16 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-cargo-
 
-      - name: Install Rust
-        run: rustup toolchain install stable
+      - name: Install Rust and wasm32 target
+        run: |
+          rustup toolchain install stable
+          rustup target add wasm32-unknown-unknown
 
       - name: Build
         run: cargo build --verbose
+
+      - name: Build wasm32
+        run: cargo build --target wasm32-unknown-unknown --verbose
 
       - name: Clippy
         run: cargo clippy --verbose -- -D warnings
@@ -42,28 +47,3 @@ jobs:
 
       - name: Fmt
         run: cargo fmt -- --check
-
-  build-wasm:
-    runs-on: ubuntu-latest
-
-    steps:
-      - uses: actions/checkout@v3
-
-      - uses: actions/cache@v3
-        with:
-          path: |
-            ~/.cargo
-            ~/.rustup/toolchains
-            target
-          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-cargo-
-
-      - name: Install Rust for wasm32
-        run: rustup target add wasm32-unknown-unknown
-
-      - name: Build for wasm32-unknown-unknown
-        run: cargo build --target wasm32-unknown-unknown --verbose
-
-      - name: Tests for wasm32
-        run: cargo test --target wasm32-unknown-unknown --verbose

@@ -5,7 +5,6 @@
 //! The only supported format is the Snark JS `ptau` trusted setup file format.
 
 #![allow(clippy::type_complexity)]
-
 use ark_ec::{pairing::Pairing, AffineRepr};
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize, Compress};
 use ark_std::{io::Cursor, vec::Vec};
