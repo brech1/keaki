@@ -4,9 +4,6 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-blake3 = { version = "1.5.4", default-features = false }
-thiserror = { version = "1.0.64" }
-
 # Arkworks
 ark-bls12-381 = { version = "0.4.0", default-features = false, features = ["curve"] }
 ark-bn254 = { version = "0.4.0", default-features = false, features = ["curve"] }
@@ -14,3 +11,13 @@ ark-ec = { version = "0.4.2", default-features = false }
 ark-ff = { version = "0.4.2", default-features = false }
 ark-serialize = { version = "0.4.2", default-features = false }
 ark-std = { version = "0.4.0", default-features = false }
+
+# Error
+thiserror = { version = "1.0.64" }
+
+# Hashing
+blake3 = { version = "1.5.4", default-features = false }
+
+# Rng
+getrandom =  { version = "0.2.5", default-features = false, features = ["js"] }
+rand = { version = "0.8.5", default-features = false, features = ["small_rng", "getrandom"] }

@@ -5,8 +5,9 @@
 use crate::kzg::{g1_gen, g2_gen, KZGError, KZG};
 use ark_ec::pairing::Pairing;
 use ark_serialize::CanonicalSerialize;
-use ark_std::{ops::Mul, test_rng, vec::Vec, UniformRand};
+use ark_std::{ops::Mul, vec::Vec, UniformRand};
 use blake3::OutputReader;
+use rand::{rngs::SmallRng, SeedableRng};
 use thiserror::Error;
 
 /// Encapsulation.
@@ -25,7 +26,7 @@ pub fn encapsulate<E: Pairing>(
 
     // Generate a random value
     // This allows the generated secret not to be tied to the inputs.
-    let mut rng = &mut test_rng(); // TODO: This should be replaced with a secure rng.
+    let mut rng = SmallRng::from_entropy();
     let r = E::ScalarField::rand(&mut rng);
 
     // Calculate secret
@@ -119,6 +120,8 @@ pub enum KEMError {
     EncapsulationInputsLengthError,
     #[error("KZG error: {0}")]
     KZGError(KZGError),
+    #[error("Randomness generation failed: {0}")]
+    RandomnessGenerationError(String),
     #[error("Secret serialization failed {0}")]
     SerializationError(String),
 }
