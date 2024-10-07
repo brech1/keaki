@@ -4,12 +4,11 @@
 
 use ark_ec::pairing::Pairing;
 use ark_ff::Field;
-use ark_std::UniformRand;
+use ark_std::{test_rng, UniformRand};
 use keaki::{
     pol_op::lagrange_interpolation,
     we::{WEError, WE},
 };
-use rand::thread_rng;
 use std::time::Instant;
 
 /// Type alias for the plaintext tuple
@@ -32,7 +31,7 @@ impl<E: Pairing> Receiver<E> {
         let ck_len = we.kzg().g1_pow().len();
         let pad_len = ck_len - boolean_choices.len();
         let pad = (0..pad_len)
-            .map(|_| E::ScalarField::rand(&mut thread_rng()))
+            .map(|_| E::ScalarField::rand(&mut test_rng()))
             .collect();
         let evaluations = [boolean_choices.clone(), pad].concat();
 
