@@ -201,13 +201,13 @@ impl<E: Pairing> KZG<E> {
         }
 
         // hat_h = iDFt_2d(u)
-        let hat_h = domain_2d.ifft(&mut u);
+        let hat_h = domain_2d.ifft(&u);
 
         // Take first d elements of hat_h as h
-        let mut h = hat_h[0..p.len()].to_vec();
+        let h = hat_h[0..p.len()].to_vec();
 
         // Evaluate h in each n-th root of unity
-        let ct = domain.fft(&mut h);
+        let ct = domain.fft(&h);
 
         Ok(ct)
     }
