@@ -7,6 +7,7 @@ pub mod setup;
 use crate::pol_op::*;
 use ark_ec::{pairing::Pairing, AffineRepr};
 use ark_ff::{Field, Zero};
+use ark_poly::{EvaluationDomain, Radix2EvaluationDomain};
 use ark_std::{ops::Mul, vec::Vec};
 use setup::{get_powers_from_file, SetupFileError};
 use thiserror::Error;
@@ -157,6 +158,58 @@ impl<E: Pairing> KZG<E> {
             E::pairing(commitment - lagrange_p_com, g2_gen::<E>()) == E::pairing(proof, zero_p_com);
 
         Ok(v)
+    }
+
+    /// Computes openings for a polynomial at multiple points.
+    /// The openings poins are the n-th roots of unity.
+    pub fn set_open(&self, p: &[E::ScalarField]) -> Result<Vec<E::G1>, KZGError> {
+        // Create evaluation domains
+        let d = p.len();
+        let domain = Radix2EvaluationDomain::<<E as Pairing>::ScalarField>::new(d).unwrap();
+        let domain_2d = Radix2EvaluationDomain::<<E as Pairing>::ScalarField>::new(2 * d).unwrap();
+
+        // hat_s = ([s[d−1]], [s[d−2]], ..., [s], [1], [0], [0], ..., [0])
+        // Where there are d neutral elements at the end
+        let mut hat_s = Vec::with_capacity(2 * d);
+        for i in (0..d).rev() {
+            hat_s.push(self.g1_pow()[i]);
+        }
+        for _ in 0..d {
+            hat_s.push(E::G1::zero());
+        }
+
+        // y = DFT_2d(hat_s)
+        let y = domain_2d.fft(&hat_s);
+
+        // hat_c = (0, 0, ..., 0, f1, f2, ..., fd)
+        // Where there are d neutral elements at the beginning
+        let mut hat_c = Vec::with_capacity(2 * d);
+        for _ in 0..d {
+            hat_c.push(E::ScalarField::zero());
+        }
+        for &coeff in p {
+            hat_c.push(coeff);
+        }
+
+        // v = DFT_2d(hat_c)
+        let v = domain_2d.fft(&hat_c);
+
+        // u = y * v
+        let mut u: Vec<E::G1> = Vec::with_capacity(2 * d);
+        for i in 0..2 * d {
+            u.push(y[i].mul(v[i]));
+        }
+
+        // hat_h = iDFt_2d(u)
+        let hat_h = domain_2d.ifft(&mut u);
+
+        // Take first d elements of hat_h as h
+        let mut h = hat_h[0..p.len()].to_vec();
+
+        // Evaluate h in each n-th root of unity
+        let ct = domain.fft(&mut h);
+
+        Ok(ct)
     }
 
     /// Returns the powers of tau in G1.
@@ -641,5 +694,37 @@ mod tests {
         let v_wrong_proof = kzg.batch_verify(commitment, &points, &expected_values, fake_proof);
         assert!(v_wrong_proof.is_ok());
         assert_eq!(v_wrong_proof.unwrap(), false);
+    }
+
+    #[test]
+    fn test_kzg_set_open() {
+        let rng = &mut test_rng();
+        let secret = Fr::rand(rng);
+        let max_degree = 20;
+        let kzg = KZG::<Bls12_381>::setup(secret, max_degree);
+
+        // Create commitment polynomial
+        let p = vec![Fr::from(1), Fr::from(2), Fr::from(3), Fr::from(4)];
+
+        let proofs = kzg.set_open(&p).unwrap();
+
+        // Naive openings
+        // We don't know the evaluation points, we need to get them from the domain generator.
+
+        // Create evaluation domain
+        let domain =
+            Radix2EvaluationDomain::<<Bls12_381 as Pairing>::ScalarField>::new(p.len()).unwrap();
+        let actual_roots = domain.elements();
+
+        // Open the polynomial at the evaluation points
+        let mut expected_proofs = Vec::new();
+        for root in actual_roots {
+            let proof = kzg.open(&p, &root).unwrap();
+            expected_proofs.push(proof);
+        }
+
+        for i in 0..p.len() {
+            assert_eq!(proofs[i], expected_proofs[i]);
+        }
     }
 }
