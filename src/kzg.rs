@@ -45,13 +45,8 @@ impl<E: Pairing> KZG<E> {
 
     /// Commits to a polynomial.
     pub fn commit(&self, p: &[E::ScalarField]) -> Result<E::G1, KZGError> {
-        if p.len() > self.g1_pow.len() {
-            return Err(KZGError::PolynomialTooLarge(p.len(), self.g1_pow.len()));
-        }
-
         let mut commitment = E::G1::zero();
 
-        // Scalar multiplication of the polynomial coefficients with the powers in G1
         // commitment = sum(p[i] * g1_powers[i])
         for (i, &coeff) in p.iter().enumerate() {
             commitment += self.g1_pow[i] * coeff;
@@ -168,43 +163,43 @@ impl<E: Pairing> KZG<E> {
         let domain = Radix2EvaluationDomain::<<E as Pairing>::ScalarField>::new(d).unwrap();
         let domain_2d = Radix2EvaluationDomain::<<E as Pairing>::ScalarField>::new(2 * d).unwrap();
 
-        // hat_s = ([s[d−1]], [s[d−2]], ..., [s], [1], [0], [0], ..., [0])
+        // s = ([s[d−1]], [s[d−2]], ..., [s], [1], [0], [0], ..., [0])
         // Where there are d neutral elements at the end
-        let mut hat_s = Vec::with_capacity(2 * d);
+        let mut s = Vec::with_capacity(2 * d);
         for i in (0..d).rev() {
-            hat_s.push(self.g1_pow()[i]);
+            s.push(self.g1_pow()[i]);
         }
         for _ in 0..d {
-            hat_s.push(E::G1::zero());
+            s.push(E::G1::zero());
         }
 
-        // y = DFT_2d(hat_s)
-        let y = domain_2d.fft(&hat_s);
+        // hat_s = DFT_2d(s)
+        let hat_s = domain_2d.fft(&s);
 
-        // hat_c = (0, 0, ..., 0, f1, f2, ..., fd)
+        // a = (0, 0, ..., 0, f1, f2, ..., fd)
         // Where there are d neutral elements at the beginning
-        let mut hat_c = Vec::with_capacity(2 * d);
+        let mut a = Vec::with_capacity(2 * d);
         for _ in 0..d {
-            hat_c.push(E::ScalarField::zero());
+            a.push(E::ScalarField::zero());
         }
         for &coeff in p {
-            hat_c.push(coeff);
+            a.push(coeff);
         }
 
-        // v = DFT_2d(hat_c)
-        let v = domain_2d.fft(&hat_c);
+        // hat_a = DFT_2d(a)
+        let hat_a = domain_2d.fft(&a);
 
-        // u = y * v
-        let mut u: Vec<E::G1> = Vec::with_capacity(2 * d);
+        // hat_h = hat_a * hat_s
+        let mut hat_h: Vec<E::G1> = Vec::with_capacity(2 * d);
         for i in 0..2 * d {
-            u.push(y[i].mul(v[i]));
+            hat_h.push(hat_s[i].mul(hat_a[i]));
         }
 
         // hat_h = iDFt_2d(u)
-        let hat_h = domain_2d.ifft(&u);
+        let h_prime = domain_2d.ifft(&hat_h);
 
-        // Take first d elements of hat_h as h
-        let h = hat_h[0..p.len()].to_vec();
+        // Take first d elements of h_prime as h
+        let h = h_prime[0..p.len()].to_vec();
 
         // Evaluate h in each n-th root of unity
         let ct = domain.fft(&h);
