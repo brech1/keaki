@@ -701,19 +701,17 @@ mod tests {
         // Create commitment polynomial
         let p = vec![Fr::from(1), Fr::from(2), Fr::from(3), Fr::from(4)];
 
+        // Calculate proofs
         let proofs = kzg.set_open(&p).unwrap();
-
-        // Naive openings
-        // We don't know the evaluation points, we need to get them from the domain generator.
 
         // Create evaluation domain
         let domain =
             Radix2EvaluationDomain::<<Bls12_381 as Pairing>::ScalarField>::new(p.len()).unwrap();
-        let actual_roots = domain.elements();
+        let roots_of_unity = domain.elements();
 
         // Open the polynomial at the evaluation points
         let mut expected_proofs = Vec::new();
-        for root in actual_roots {
+        for root in roots_of_unity {
             let proof = kzg.open(&p, &root).unwrap();
             expected_proofs.push(proof);
         }
