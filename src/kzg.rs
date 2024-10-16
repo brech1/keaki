@@ -45,6 +45,10 @@ impl<E: Pairing> KZG<E> {
 
     /// Commits to a polynomial.
     pub fn commit(&self, p: &[E::ScalarField]) -> Result<E::G1, KZGError> {
+        if p.len() > self.g1_pow.len() {
+            return Err(KZGError::PolynomialTooLarge(p.len(), self.g1_pow.len()));
+        }
+
         let mut commitment = E::G1::zero();
 
         // commitment = sum(p[i] * g1_powers[i])
