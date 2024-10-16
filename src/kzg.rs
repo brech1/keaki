@@ -51,6 +51,7 @@ impl<E: Pairing> KZG<E> {
 
         let mut commitment = E::G1::zero();
 
+        // Scalar multiplication of the polynomial coefficients with the powers in G1
         // commitment = sum(p[i] * g1_powers[i])
         for (i, &coeff) in p.iter().enumerate() {
             commitment += self.g1_pow[i] * coeff;
