@@ -9,6 +9,7 @@ ark-bls12-381 = { version = "0.4.0", default-features = false, features = ["curv
 ark-bn254 = { version = "0.4.0", default-features = false, features = ["curve"] }
 ark-ec = { version = "0.4.2", default-features = false }
 ark-ff = { version = "0.4.2", default-features = false }
+ark-poly = { version = "0.4.2", default-features = false }
 ark-serialize = { version = "0.4.2", default-features = false }
 ark-std = { version = "0.4.0", default-features = false }
 
