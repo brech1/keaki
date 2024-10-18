@@ -4,11 +4,16 @@
 
 pub mod setup;
 
-use crate::pol_op::*;
 use ark_ec::{pairing::Pairing, AffineRepr};
 use ark_ff::{Field, Zero};
-use ark_poly::{EvaluationDomain, Radix2EvaluationDomain};
-use ark_std::{ops::Mul, vec::Vec};
+use ark_poly::{
+    univariate::DensePolynomial, DenseUVPolynomial, EvaluationDomain, Polynomial,
+    Radix2EvaluationDomain,
+};
+use ark_std::{
+    ops::{Div, Mul, Sub},
+    vec::Vec,
+};
 use setup::{get_powers_from_file, SetupFileError};
 use thiserror::Error;
 
@@ -44,7 +49,7 @@ impl<E: Pairing> KZG<E> {
     }
 
     /// Commits to a polynomial.
-    pub fn commit(&self, p: &[E::ScalarField]) -> Result<E::G1, KZGError> {
+    pub fn commit(&self, p: &DensePolynomial<E::ScalarField>) -> Result<E::G1, KZGError> {
         if p.len() > self.g1_pow.len() {
             return Err(KZGError::PolynomialTooLarge(p.len(), self.g1_pow.len()));
         }
@@ -53,7 +58,7 @@ impl<E: Pairing> KZG<E> {
 
         // Scalar multiplication of the polynomial coefficients with the powers in G1
         // commitment = sum(p[i] * g1_powers[i])
-        for (i, &coeff) in p.iter().enumerate() {
+        for (i, &coeff) in p.coeffs.iter().enumerate() {
             commitment += self.g1_pow[i] * coeff;
         }
 
@@ -61,16 +66,23 @@ impl<E: Pairing> KZG<E> {
     }
 
     /// Computes an opening (proof) for a polynomial at a point.
-    pub fn open(&self, p: &[E::ScalarField], point: &E::ScalarField) -> Result<E::G1, KZGError> {
-        let value = evaluate_polynomial::<E>(p, point);
+    pub fn open(
+        &self,
+        p: &DensePolynomial<E::ScalarField>,
+        point: &E::ScalarField,
+    ) -> Result<E::G1, KZGError> {
+        let value = p.evaluate(point);
+
+        // p(point)
+        let p_value = DensePolynomial::from_coefficients_slice(&[value]);
 
         // p(x) - p(point)
-        let numerator = subtract_polynomials::<E>(p, &[value]);
+        let numerator = p.sub(&p_value);
 
         // x - point
-        let denominator = [-*point, E::ScalarField::ONE];
+        let denominator = DensePolynomial::from_coefficients_slice(&[-*point, E::ScalarField::ONE]);
 
-        let quotient = divide_polynomials::<E>(&numerator, &denominator)?;
+        let quotient = numerator.div(&denominator);
 
         // Generate the proof by committing to the quotient polynomial
         self.commit(&quotient)
@@ -99,63 +111,6 @@ impl<E: Pairing> KZG<E> {
         // e(commitment - [beta]_1, [1]_2) == e(proof, [tau]_2 - [alpha]_2)
         let v = E::pairing(commitment - value_in_g1, g2_gen)
             == E::pairing(proof, tau_in_g2 - point_in_g2);
-
-        Ok(v)
-    }
-
-    /// Computes a batch opening for a polynomial at multiple points.
-    pub fn batch_open(
-        &self,
-        p: &[E::ScalarField],
-        points: &[E::ScalarField],
-    ) -> Result<E::G1, KZGError> {
-        // Evaluate the polynomial at the points
-        let mut values = Vec::with_capacity(points.len());
-        for point in points.iter() {
-            values.push(evaluate_polynomial::<E>(p, point));
-        }
-
-        // Compute the Lagrange interpolation for the points -- I(x)
-        let lagrange_p = lagrange_interpolation::<E>(points, &values)?;
-
-        // Subtract from the original polynomial
-        // p(x) - I(x)
-        let numerator = subtract_polynomials::<E>(p, &lagrange_p);
-
-        // Divide the numerator by the zero polynomial
-        // (p(x) - I(x)) / Z(x)
-        let quotient = divide_polynomials::<E>(&numerator, &zero_polynomial::<E>(points))?;
-
-        // Generate the batch proof by committing to the quotient
-        self.commit(&quotient)
-    }
-
-    /// Verifies a batch opening proof for multiple points
-    pub fn batch_verify(
-        &self,
-        commitment: E::G1,
-        points: &[E::ScalarField],
-        values: &[E::ScalarField],
-        proof: E::G1,
-    ) -> Result<bool, KZGError> {
-        // Compute the Lagrange interpolation for the points - I(x)
-        let lagrange_p = lagrange_interpolation::<E>(points, values)?;
-
-        // Compute the zero polynomial
-        let zero_p = zero_polynomial::<E>(points);
-
-        // Commit to the zero polynomial in G2
-        let mut zero_p_com = E::G2::zero();
-        for (i, &coeff) in zero_p.iter().enumerate() {
-            zero_p_com += self.g2_pow[i] * coeff;
-        }
-
-        // Commit to the Lagrange polynomial in G1
-        let lagrange_p_com = self.commit(&lagrange_p)?;
-
-        // e(commitment - [lagrange_p]_1, [1]_2) == e(proof, [zero_p]_2)
-        let v =
-            E::pairing(commitment - lagrange_p_com, g2_gen::<E>()) == E::pairing(proof, zero_p_com);
 
         Ok(v)
     }
@@ -237,18 +192,10 @@ pub fn g2_gen<E: Pairing>() -> E::G2 {
 pub enum KZGError {
     #[error("G2 powers of tau are empty")]
     G2PowersEmpty,
-    #[error("Operation error: {0}")]
-    OperationError(OperationError),
     #[error("Can't commit to polynomial: polynomial has degree {0} but max degree is {1}")]
     PolynomialTooLarge(usize, usize),
     #[error("Setup file error: {0}")]
     SetupFileError(SetupFileError),
-}
-
-impl From<OperationError> for KZGError {
-    fn from(err: OperationError) -> Self {
-        KZGError::OperationError(err)
-    }
 }
 
 impl From<SetupFileError> for KZGError {
@@ -315,7 +262,7 @@ mod tests {
         let kzg = KZG::<Bls12_381>::setup(secret, max_degree);
 
         // 2 x^2 + 3 x + 1
-        let p = vec![Fr::from(1), Fr::from(3), Fr::from(2)];
+        let p = DensePolynomial::from_coefficients_slice(&[Fr::from(1), Fr::from(3), Fr::from(2)]);
         let commitment = kzg.commit(&p).unwrap();
 
         let mut expected_commitment = G1Projective::zero();
@@ -332,8 +279,12 @@ mod tests {
         let secret = Fr::rand(rng);
         let max_degree = 2;
         let kzg = KZG::<Bls12_381>::setup(secret, max_degree);
-
-        let p = vec![Fr::from(1), Fr::from(3), Fr::from(2), Fr::from(4)];
+        let p = DensePolynomial::from_coefficients_slice(&[
+            Fr::from(1),
+            Fr::from(3),
+            Fr::from(2),
+            Fr::from(4),
+        ]);
 
         let result = kzg.commit(&p);
         let expected_err = KZGError::PolynomialTooLarge(p.len(), max_degree + 1);
@@ -347,21 +298,24 @@ mod tests {
         let secret = Fr::rand(rng);
         let max_degree = 2;
         let kzg = KZG::<Bls12_381>::setup(secret, max_degree);
-
-        let p = vec![
+        let p = DensePolynomial::from_coefficients_slice(&[
             Fr::from(1),
             Fr::from(2),
             Fr::from(3),
             Fr::from(4),
             Fr::from(5),
             Fr::from(6),
-        ];
+        ]);
+
         let point = Fr::from(5);
 
-        let value = evaluate_polynomial::<Bls12_381>(&p, &point);
-        let numerator = subtract_polynomials::<Bls12_381>(&p, &[value]);
-        let denominator = [-point, <Bls12_381 as Pairing>::ScalarField::ONE];
-        let quotient = divide_polynomials::<Bls12_381>(&numerator, &denominator).unwrap();
+        let value = p.evaluate(&point);
+        let numerator = p.sub(&DensePolynomial::from_coefficients_slice(&[value]));
+        let denominator = DensePolynomial::from_coefficients_slice(&[
+            -point,
+            <Bls12_381 as Pairing>::ScalarField::ONE,
+        ]);
+        let quotient = numerator.div(&denominator);
 
         let result = kzg.open(&p, &point);
         let expected_err = KZGError::PolynomialTooLarge(quotient.len(), max_degree + 1);
@@ -377,7 +331,7 @@ mod tests {
         let kzg = KZG::<Bls12_381>::setup(secret, max_degree);
 
         // 2 x^2 + 3 x + 1
-        let p = vec![Fr::from(1), Fr::from(3), Fr::from(2)];
+        let p = DensePolynomial::from_coefficients_slice(&[Fr::from(1), Fr::from(3), Fr::from(2)]);
 
         let commitment = kzg.commit(&p).unwrap();
         let point = Fr::from(5);
@@ -402,13 +356,13 @@ mod tests {
         let kzg = KZG::<Bls12_381>::setup(secret, max_degree);
 
         // p(x) = 7 x^4 + 9 x^3 - 5 x^2 - 25 x - 24
-        let p = vec![
+        let p = DensePolynomial::from_coefficients_slice(&[
             Fr::from(-24),
             Fr::from(-25),
             Fr::from(-5),
             Fr::from(9),
             Fr::from(7),
-        ];
+        ]);
 
         let commitment = kzg.commit(&p).unwrap();
         let point = Fr::from(11);
@@ -437,13 +391,13 @@ mod tests {
         let kzg = KZG::<Bls12_381>::setup(secret, max_degree);
 
         // p(x) = 7 x^4 + 9 x^3 - 5 x^2 - 25 x - 24
-        let p = vec![
+        let p = DensePolynomial::from_coefficients_slice(&[
             Fr::from(-24),
             Fr::from(-25),
             Fr::from(-5),
             Fr::from(9),
             Fr::from(7),
-        ];
+        ]);
 
         let commitment = kzg.commit(&p).unwrap();
 
@@ -471,13 +425,13 @@ mod tests {
         let kzg = KZG::<Bls12_381>::setup(secret, max_degree);
 
         // p(x) = 7 x^4 + 9 x^3 - 5 x^2 - 25 x - 24
-        let p = vec![
+        let p = DensePolynomial::from_coefficients_slice(&[
             Fr::from(-24),
             Fr::from(-25),
             Fr::from(-5),
             Fr::from(9),
             Fr::from(7),
-        ];
+        ]);
 
         let commitment = kzg.commit(&p).unwrap();
 
@@ -491,13 +445,13 @@ mod tests {
         assert_eq!(v_valid_point, true);
 
         // Create a proof for a different polynomial
-        let fake_p = vec![
+        let fake_p = DensePolynomial::from_coefficients_slice(&[
             Fr::from(-24),
             Fr::from(-26),
             Fr::from(-5),
             Fr::from(9),
             Fr::from(7),
-        ];
+        ]);
         let wrong_proof = kzg.open(&fake_p, &point).unwrap();
         let v_wrong_proof = kzg.verify(commitment, point, value, wrong_proof).unwrap();
         assert_eq!(v_wrong_proof, false);
@@ -511,13 +465,13 @@ mod tests {
         let kzg = KZG::<Bls12_381>::setup(secret, max_degree);
 
         // p(x) = 7 x^4 + 9 x^3 - 5 x^2 - 25 x - 24
-        let p = vec![
+        let p = DensePolynomial::from_coefficients_slice(&[
             Fr::from(-24),
             Fr::from(-25),
             Fr::from(-5),
             Fr::from(9),
             Fr::from(7),
-        ];
+        ]);
 
         let commitment = kzg.commit(&p).unwrap();
 
@@ -537,166 +491,6 @@ mod tests {
     }
 
     #[test]
-    fn test_kzg_batch_open_repeated_points() {
-        let rng = &mut test_rng();
-        let secret = Fr::rand(rng);
-        let max_degree = 4;
-        let kzg = KZG::<Bls12_381>::setup(secret, max_degree);
-
-        // p(x) = 3 x^3 + 2 x^2 + x + 1
-        let p = vec![Fr::from(1), Fr::from(1), Fr::from(2), Fr::from(3)];
-
-        let repeated_points = vec![Fr::from(2), Fr::from(2)];
-
-        let res = kzg.batch_open(&p, &repeated_points);
-        let expected_error = KZGError::OperationError(OperationError::RepeatedPoints);
-
-        assert_eq!(res, Err(expected_error));
-    }
-
-    #[test]
-    fn test_kzg_batch_open_and_verify() {
-        let rng = &mut test_rng();
-        let secret = Fr::rand(rng);
-        let max_degree = 4;
-        let kzg = KZG::<Bls12_381>::setup(secret, max_degree);
-
-        // p(x) = 7 x^4 + 9 x^3 - 5 x^2 - 25 x - 24
-        let p = vec![
-            Fr::from(-24),
-            Fr::from(-25),
-            Fr::from(-5),
-            Fr::from(9),
-            Fr::from(7),
-        ];
-
-        let commitment = kzg.commit(&p).unwrap();
-
-        // p(6) = 10662
-        // p(11) = 113562
-        // p(17) = 626970
-        let points = vec![Fr::from(6), Fr::from(11), Fr::from(17)];
-        let expected_values = vec![Fr::from(10662), Fr::from(113562), Fr::from(626970)];
-
-        let proof_res = kzg.batch_open(&p, &points);
-        assert!(proof_res.is_ok());
-        // TODO: Assert value
-
-        let proof = proof_res.unwrap();
-        let res = kzg.batch_verify(commitment, &points, &expected_values, proof);
-        assert!(res.is_ok());
-
-        let v = res.unwrap();
-        assert!(v);
-    }
-
-    #[test]
-    fn test_kzg_batch_verify_repeated_points() {
-        let rng = &mut test_rng();
-        let secret = Fr::rand(rng);
-        let max_degree = 4;
-        let kzg = KZG::<Bls12_381>::setup(secret, max_degree);
-
-        // p(x) = 3 x^3 + 2 x^2 + x + 1
-        let p = vec![Fr::from(1), Fr::from(1), Fr::from(2), Fr::from(3)];
-
-        let commitment = kzg.commit(&p).unwrap();
-
-        let points = vec![Fr::from(2), Fr::from(3)];
-
-        let proof = kzg.batch_open(&p, &points).unwrap();
-
-        let points = vec![Fr::from(2), Fr::from(2)];
-        let expected_values = vec![Fr::from(25), Fr::from(25)];
-
-        let res = kzg.batch_verify(commitment, &points, &expected_values, proof);
-        let expected_error = KZGError::OperationError(OperationError::RepeatedPoints);
-
-        assert_eq!(res, Err(expected_error));
-    }
-
-    #[test]
-    fn test_kzg_batch_verify_wrong_points() {
-        let rng = &mut test_rng();
-        let secret = Fr::rand(rng);
-        let max_degree = 4;
-        let kzg = KZG::<Bls12_381>::setup(secret, max_degree);
-
-        // p(x) = 7 x^4 + 9 x^3 - 5 x^2 - 25 x - 24
-        let p = vec![
-            Fr::from(-24),
-            Fr::from(-25),
-            Fr::from(-5),
-            Fr::from(9),
-            Fr::from(7),
-        ];
-
-        let commitment = kzg.commit(&p).unwrap();
-
-        // p(6) = 10662
-        // p(11) = 113562
-        // p(17) = 626970
-        let points = vec![Fr::from(6), Fr::from(11), Fr::from(17)];
-        let expected_values = vec![Fr::from(10662), Fr::from(113562), Fr::from(626970)];
-
-        let proof = kzg.batch_open(&p, &points).unwrap();
-
-        let v_valid_point = kzg.batch_verify(commitment, &points, &expected_values, proof);
-        assert!(v_valid_point.is_ok());
-        assert_eq!(v_valid_point.unwrap(), true);
-
-        let wrong_points = vec![Fr::from(7), Fr::from(11), Fr::from(17)];
-        let v_wrong_points = kzg.batch_verify(commitment, &wrong_points, &expected_values, proof);
-        assert!(v_wrong_points.is_ok());
-        assert_eq!(v_wrong_points.unwrap(), false);
-    }
-
-    #[test]
-    fn test_kzg_batch_verify_wrong_proof() {
-        let rng = &mut test_rng();
-        let secret = Fr::rand(rng);
-        let max_degree = 4;
-        let kzg = KZG::<Bls12_381>::setup(secret, max_degree);
-
-        // p(x) = 7 x^4 + 9 x^3 - 5 x^2 - 25 x - 24
-        let p = vec![
-            Fr::from(-24),
-            Fr::from(-25),
-            Fr::from(-5),
-            Fr::from(9),
-            Fr::from(7),
-        ];
-
-        let commitment = kzg.commit(&p).unwrap();
-
-        // p(6) = 10662
-        // p(11) = 113562
-        // p(17) = 626970
-        let points = vec![Fr::from(6), Fr::from(11), Fr::from(17)];
-        let expected_values = vec![Fr::from(10662), Fr::from(113562), Fr::from(626970)];
-
-        let proof = kzg.batch_open(&p, &points).unwrap();
-        let v_valid_point = kzg.batch_verify(commitment, &points, &expected_values, proof);
-        assert!(v_valid_point.is_ok());
-        assert_eq!(v_valid_point.unwrap(), true);
-
-        // Compute a proof for another polynomial
-        // q(x) = 2 x^4 - 3 x^3 + x^2 + 5 x + 10
-        let q = vec![
-            Fr::from(10),
-            Fr::from(5),
-            Fr::from(1),
-            Fr::from(-3),
-            Fr::from(2),
-        ];
-        let fake_proof = kzg.batch_open(&q, &points).unwrap();
-
-        let v_wrong_proof = kzg.batch_verify(commitment, &points, &expected_values, fake_proof);
-        assert!(v_wrong_proof.is_ok());
-        assert_eq!(v_wrong_proof.unwrap(), false);
-    }
-
-    #[test]
     fn test_kzg_set_open() {
         let rng = &mut test_rng();
         let secret = Fr::rand(rng);
@@ -704,7 +498,12 @@ mod tests {
         let kzg = KZG::<Bls12_381>::setup(secret, max_degree);
 
         // Create commitment polynomial
-        let p = vec![Fr::from(1), Fr::from(2), Fr::from(3), Fr::from(4)];
+        let p = DensePolynomial::from_coefficients_slice(&[
+            Fr::from(1),
+            Fr::from(2),
+            Fr::from(3),
+            Fr::from(4),
+        ]);
 
         // Calculate proofs
         let proofs = kzg.set_open(&p).unwrap();
