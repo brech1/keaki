@@ -22,30 +22,30 @@ use thiserror::Error;
 pub struct KZG<E: Pairing> {
     /// Powers of tau in G1 - [tau^i]_1
     g1_pow: Vec<E::G1>,
-    /// Powers of tau in G2 - [tau^i]_2
-    g2_pow: Vec<E::G2>,
+    /// [tau]_2
+    tau_g2: E::G2,
 }
 
 impl<E: Pairing> KZG<E> {
     /// Initializes the KZG commitment scheme from a trusted setup file.
     pub fn new_from_file(file: &str) -> Result<Self, KZGError> {
         let (g1_pow, g2_pow) = get_powers_from_file::<E>(file)?;
+        let tau_g2 = g2_pow.get(1).copied().ok_or(KZGError::G2PowersEmpty)?;
 
-        Ok(Self { g1_pow, g2_pow })
+        Ok(Self { g1_pow, tau_g2 })
     }
 
     /// Initializes the KZG commitment scheme from a given secret.
     /// This is recommended for **testing purposes only**, since it requires the secret to be known.
     pub fn setup(secret: E::ScalarField, max_d: usize) -> Self {
         let mut g1_pow = Vec::with_capacity(max_d + 1);
-        let mut g2_pow = Vec::with_capacity(max_d + 1);
+        let tau_g2 = g2_gen::<E>().mul(secret);
 
         for i in 0..=max_d {
             g1_pow.push(g1_gen::<E>().mul(secret.pow([i as u64])));
-            g2_pow.push(g2_gen::<E>().mul(secret.pow([i as u64])));
         }
 
-        Self { g1_pow, g2_pow }
+        Self { g1_pow, tau_g2 }
     }
 
     /// Commits to a polynomial.
@@ -100,7 +100,7 @@ impl<E: Pairing> KZG<E> {
         let value_in_g1 = g1_gen::<E>().mul(value);
 
         // [tau]_2
-        let tau_in_g2 = self.tau_g2()?;
+        let tau_in_g2 = self.tau_g2;
 
         // [1]_2
         let g2_gen = g2_gen::<E>();
@@ -115,9 +115,10 @@ impl<E: Pairing> KZG<E> {
         Ok(v)
     }
 
-    /// Computes openings for a polynomial at multiple points.
-    /// The openings poins are the n-th roots of unity.
-    pub fn set_open(&self, p: &[E::ScalarField]) -> Result<Vec<E::G1>, KZGError> {
+    /// Computes n openings using the FK23 algorithm.
+    /// The amount of openings will depend on the length of the polynomial.
+    /// The openings points are the roots of unity of the domain.
+    pub fn open_fk(&self, p: &[E::ScalarField]) -> Result<Vec<E::G1>, KZGError> {
         // Create evaluation domains
         let d = p.len();
         let domain = Radix2EvaluationDomain::<<E as Pairing>::ScalarField>::new(d).unwrap();
@@ -173,8 +174,8 @@ impl<E: Pairing> KZG<E> {
     }
 
     /// Returns [tau]_2
-    pub fn tau_g2(&self) -> Result<E::G2, KZGError> {
-        self.g2_pow.get(1).copied().ok_or(KZGError::G2PowersEmpty)
+    pub fn tau_g2(&self) -> E::G2 {
+        self.tau_g2
     }
 }
 
@@ -229,17 +230,8 @@ mod tests {
             );
         }
 
-        // G2
-        assert_eq!(kzg.g2_pow.len(), max_degree + 1);
-        for i in 0..=max_degree {
-            assert_eq!(
-                kzg.g2_pow[i],
-                g2_gen::<Bls12_381>().mul(secret.pow([i as u64]))
-            );
-        }
-
         // [tau]_2
-        assert_eq!(kzg.tau_g2().unwrap(), g2_gen::<Bls12_381>().mul(secret));
+        assert_eq!(kzg.tau_g2, g2_gen::<Bls12_381>().mul(secret));
     }
 
     #[test]
@@ -491,7 +483,7 @@ mod tests {
     }
 
     #[test]
-    fn test_kzg_set_open() {
+    fn test_kzg_open_fk() {
         let rng = &mut test_rng();
         let secret = Fr::rand(rng);
         let max_degree = 20;
@@ -506,7 +498,7 @@ mod tests {
         ]);
 
         // Calculate proofs
-        let proofs = kzg.set_open(&p).unwrap();
+        let proofs = kzg.open_fk(&p).unwrap();
 
         // Create evaluation domain
         let domain =
