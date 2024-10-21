@@ -2,7 +2,7 @@
 //!
 //! This module implements the **Extractable Witness Key Encapsulation Mechanism** functions.
 
-use crate::kzg::{g1_gen, g2_gen, KZGError, KZG};
+use crate::kzg::{g1_gen, g2_gen, KZG};
 use ark_ec::pairing::Pairing;
 use ark_serialize::CanonicalSerialize;
 use ark_std::{ops::Mul, vec::Vec, UniformRand};
@@ -81,16 +81,8 @@ pub enum KEMError {
     DecapsulationInputsLengthError,
     #[error("Points and values sets must have the same length")]
     EncapsulationInputsLengthError,
-    #[error("KZG error: {0}")]
-    KZGError(KZGError),
     #[error("Secret serialization failed {0}")]
     SerializationError(String),
-}
-
-impl From<KZGError> for KEMError {
-    fn from(err: KZGError) -> Self {
-        KEMError::KZGError(err)
-    }
 }
 
 #[cfg(test)]
