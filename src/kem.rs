@@ -2,7 +2,7 @@
 //!
 //! This module implements the **Extractable Witness Key Encapsulation Mechanism** functions.
 
-use crate::kzg::{g1_gen, g2_gen, KZG};
+use crate::kzg::{g1_gen, g2_gen};
 use ark_ec::pairing::Pairing;
 use ark_serialize::CanonicalSerialize;
 use ark_std::{ops::Mul, vec::Vec, UniformRand};
@@ -13,10 +13,10 @@ use thiserror::Error;
 /// Encapsulation.
 /// Generates a key for a commitment and a point-value pair.
 pub fn encapsulate<E: Pairing>(
-    kzg: &KZG<E>,
     commitment: E::G1,
     point: E::ScalarField,
     value: E::ScalarField,
+    tau_g2: E::G2,
 ) -> Result<(E::G2, OutputReader), KEMError> {
     // [beta]_1
     let value_in_g1: E::G1 = g1_gen::<E>().mul(value);
@@ -39,7 +39,7 @@ pub fn encapsulate<E: Pairing>(
 
     // Calculate a ciphertext to share the randomness used in the encapsulation.
     // ct = r([tau]_2 - [alpha]_2)
-    let tau_alpha: E::G2 = kzg.tau_g2() - g2_gen::<E>().mul(point);
+    let tau_alpha: E::G2 = tau_g2 - g2_gen::<E>().mul(point);
     let ciphertext: E::G2 = tau_alpha.mul(r);
 
     // Generate the key
@@ -88,6 +88,7 @@ pub enum KEMError {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::kzg::KZG;
     use ark_bls12_381::{Bls12_381, Fr};
     use ark_poly::{univariate::DensePolynomial, DenseUVPolynomial, Polynomial};
     use ark_std::{rand::Rng, test_rng};
@@ -116,7 +117,8 @@ mod tests {
         let commitment = kzg.commit(&p).unwrap();
 
         // Encapsulate
-        let (ciphertext, mut enc_key) = encapsulate(&kzg, commitment, point, eval).unwrap();
+        let (ciphertext, mut enc_key) =
+            encapsulate::<Bls12_381>(commitment, point, eval, kzg.tau_g2()).unwrap();
         let mut enc_key_bytes = [0u8; 32];
         enc_key.fill(&mut enc_key_bytes);
 
@@ -150,7 +152,7 @@ mod tests {
 
         // Encapsulate
         let (ciphertext, mut enc_key) =
-            encapsulate::<Bls12_381>(&kzg, commitment, point, eval).unwrap();
+            encapsulate::<Bls12_381>(commitment, point, eval, kzg.tau_g2()).unwrap();
         let mut enc_key_bytes = [0u8; 32];
         enc_key.fill(&mut enc_key_bytes);
 
@@ -192,7 +194,7 @@ mod tests {
 
         // Encapsulate
         let (ciphertext, mut enc_key) =
-            encapsulate::<Bls12_381>(&kzg, commitment, point, eval).unwrap();
+            encapsulate::<Bls12_381>(commitment, point, eval, kzg.tau_g2()).unwrap();
         let mut enc_key_bytes = [0u8; 32];
         enc_key.fill(&mut enc_key_bytes);
 
@@ -230,7 +232,7 @@ mod tests {
 
         // Encapsulate with point1
         let (ciphertext1, mut enc_key) =
-            encapsulate::<Bls12_381>(&kzg, commitment, point1, val1).unwrap();
+            encapsulate::<Bls12_381>(commitment, point1, val1, kzg.tau_g2()).unwrap();
         let mut enc_key_bytes = [0u8; 32];
         enc_key.fill(&mut enc_key_bytes);
 
