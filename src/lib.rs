@@ -4,4 +4,5 @@
 
 pub mod kem;
 pub mod kzg;
+pub mod vec;
 pub mod we;

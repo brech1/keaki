@@ -16,7 +16,7 @@ pub fn encapsulate<E: Pairing>(
     commitment: E::G1,
     point: E::ScalarField,
     value: E::ScalarField,
-    tau_g2: E::G2,
+    tau_g2: &E::G2,
 ) -> Result<(E::G2, OutputReader), KEMError> {
     // [beta]_1
     let value_in_g1: E::G1 = g1_gen::<E>().mul(value);
@@ -39,7 +39,7 @@ pub fn encapsulate<E: Pairing>(
 
     // Calculate a ciphertext to share the randomness used in the encapsulation.
     // ct = r([tau]_2 - [alpha]_2)
-    let tau_alpha: E::G2 = tau_g2 - g2_gen::<E>().mul(point);
+    let tau_alpha: E::G2 = *tau_g2 - g2_gen::<E>().mul(point);
     let ciphertext: E::G2 = tau_alpha.mul(r);
 
     // Generate the key

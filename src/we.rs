@@ -5,7 +5,6 @@
 use crate::kem::{self, KEMError};
 use ark_ec::pairing::Pairing;
 use ark_std::vec::Vec;
-use thiserror::Error;
 
 /// Ciphertext type alias.
 pub type Ciphertext<E> = (<E as Pairing>::G2, Vec<u8>);
@@ -19,8 +18,8 @@ pub fn encrypt<E: Pairing>(
     point: E::ScalarField,
     value: E::ScalarField,
     msg: &[u8],
-    tau_g2: E::G2,
-) -> Result<Ciphertext<E>, WEError> {
+    tau_g2: &E::G2,
+) -> Result<Ciphertext<E>, KEMError> {
     // Generate a key and the corresponding key ciphertext
     // (ct_1, k) <- Encap(x)
     let (key_ct, mut key_stream) = kem::encapsulate::<E>(com, point, value, tau_g2)?;
@@ -38,7 +37,9 @@ pub fn encrypt<E: Pairing>(
 
 /// Decrypts a ciphertext with a proof.
 /// Returns the decrypted message.
-pub fn decrypt<E: Pairing>(proof: E::G1, key_ct: E::G2, msg_ct: &[u8]) -> Result<Vec<u8>, WEError> {
+pub fn decrypt<E: Pairing>(proof: E::G1, ct: Ciphertext<E>) -> Result<Vec<u8>, KEMError> {
+    let (key_ct, msg_ct) = ct;
+
     // k = Decap(w, ct_1)
     let mut key_stream = kem::decapsulate::<E>(proof, key_ct)?;
 
@@ -50,18 +51,6 @@ pub fn decrypt<E: Pairing>(proof: E::G1, key_ct: E::G2, msg_ct: &[u8]) -> Result
     }
 
     Ok(msg)
-}
-
-#[derive(Error, Debug, PartialEq, Eq)]
-pub enum WEError {
-    #[error("Key Encapsulation Error {0}")]
-    KEMError(KEMError),
-}
-
-impl From<KEMError> for WEError {
-    fn from(error: KEMError) -> Self {
-        WEError::KEMError(error)
-    }
 }
 
 #[cfg(test)]
@@ -97,12 +86,11 @@ mod tests {
 
         let msg = b"helloworld";
 
-        let (key_ct, msg_ct) =
-            encrypt::<Bls12_381>(commitment, point, val, msg, kzg.tau_g2()).unwrap();
+        let ct = encrypt::<Bls12_381>(commitment, point, val, msg, kzg.tau_g2()).unwrap();
 
         let proof = kzg.open(&p, &point).unwrap();
 
-        let decrypted_msg = decrypt::<Bls12_381>(proof, key_ct, &msg_ct).unwrap();
+        let decrypted_msg = decrypt::<Bls12_381>(proof, ct).unwrap();
 
         assert_eq!(msg.to_vec(), decrypted_msg);
     }
@@ -126,13 +114,12 @@ mod tests {
         let commitment = kzg.commit(&p).unwrap();
 
         let msg = b"helloworld";
-        let (key_ct, msg_ct) =
-            encrypt::<Bls12_381>(commitment, point, val, msg, kzg.tau_g2()).unwrap();
+        let ct = encrypt::<Bls12_381>(commitment, point, val, msg, kzg.tau_g2()).unwrap();
 
         let wrong_point: Fr = Fr::rand(rng);
         let invalid_proof = kzg.open(&p, &wrong_point).unwrap();
 
-        let decrypted_msg = decrypt::<Bls12_381>(invalid_proof, key_ct, &msg_ct).unwrap();
+        let decrypted_msg = decrypt::<Bls12_381>(invalid_proof, ct).unwrap();
 
         assert_ne!(msg.to_vec(), decrypted_msg);
     }

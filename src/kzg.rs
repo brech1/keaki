@@ -174,8 +174,8 @@ impl<E: Pairing> KZG<E> {
     }
 
     /// Returns [tau]_2
-    pub fn tau_g2(&self) -> E::G2 {
-        self.tau_g2
+    pub fn tau_g2(&self) -> &E::G2 {
+        &self.tau_g2
     }
 }
 
