@@ -16,17 +16,27 @@ use ark_poly::{
 use ark_std::{rand::rngs::SmallRng, rand::SeedableRng, UniformRand};
 use thiserror::Error;
 
+/// Vector Witness Encryption.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct VectorWE<E: Pairing> {
+    /// KZG commitment scheme
     kzg: KZG<E>,
+    /// Evaluation domain
     domain_d: Radix2EvaluationDomain<<E as Pairing>::ScalarField>,
+    /// Elements
+    elements: Vec<E::ScalarField>,
 }
 
 impl<E: Pairing> VectorWE<E> {
     pub fn new(kzg: KZG<E>) -> Self {
-        let domain_d = Radix2EvaluationDomain::new(kzg.g1_pow().len()).unwrap();
+        let domain_d = Radix2EvaluationDomain::new(kzg.g1_pow().len() - 1).unwrap();
+        let elements = domain_d.elements().collect();
 
-        Self { kzg, domain_d }
+        Self {
+            kzg,
+            domain_d,
+            elements,
+        }
     }
 
     /// Commit to a vector of values.
@@ -62,17 +72,13 @@ impl<E: Pairing> VectorWE<E> {
         index: usize,
         value: E::ScalarField,
         message: &[u8],
-    ) -> Result<Ciphertext<E>, VectorWEError> {
-        // Get n-th root of unity
-        let omega = self.domain_d.element(index);
-
-        // Encrypt
-        we::encrypt::<E>(com, omega, value, message, self.kzg.tau_g2()).map_err(VectorWEError::from)
+    ) -> Ciphertext<E> {
+        we::encrypt::<E>(com, self.elements[index], value, message, self.kzg.tau_g2()).unwrap()
     }
 
     // Decrypt
-    pub fn decrypt(&self, proof: E::G1, ct: Ciphertext<E>) -> Result<Vec<u8>, VectorWEError> {
-        we::decrypt::<E>(proof, ct).map_err(VectorWEError::from)
+    pub fn decrypt(&self, proof: E::G1, ct: Ciphertext<E>) -> Vec<u8> {
+        we::decrypt::<E>(proof, ct).unwrap()
     }
 }
 

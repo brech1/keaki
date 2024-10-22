@@ -59,7 +59,7 @@ impl<E: Pairing> Receiver<E> {
 
             // decrypt message
             let decryption_start = Instant::now();
-            let decrypted_message = vec_we.decrypt(proof, chosen_ct)?;
+            let decrypted_message = vec_we.decrypt(proof, chosen_ct);
             total_decryption_time += decryption_start.elapsed();
             decrypted_messages.push(decrypted_message);
         }
@@ -71,7 +71,6 @@ impl<E: Pairing> Receiver<E> {
     }
 }
 
-#[derive(Debug, PartialEq, Eq)]
 pub struct Sender<E: Pairing> {
     commitment: E::G1,
 }
@@ -86,16 +85,14 @@ impl<E: Pairing> Sender<E> {
         vec_we: &VectorWE<E>,
         circuit_keys: &[PlaintextTuple],
     ) -> Result<Vec<CiphertextTuple<E>>, VectorWEError> {
-        let mut encrypted_messages = Vec::new();
+        let mut encrypted_messages = Vec::with_capacity(circuit_keys.len());
         let encryption_start = Instant::now();
 
         for (index, value) in circuit_keys.iter().enumerate() {
-            let enc_message_0 =
-                vec_we.encrypt(self.commitment, index, E::ScalarField::ZERO, &value.0)?;
-            let enc_message_1 =
-                vec_we.encrypt(self.commitment, index, E::ScalarField::ONE, &value.1)?;
-
-            encrypted_messages.push((enc_message_0, enc_message_1));
+            encrypted_messages.push((
+                vec_we.encrypt(self.commitment, index, E::ScalarField::ZERO, &value.0),
+                vec_we.encrypt(self.commitment, index, E::ScalarField::ONE, &value.1),
+            ));
         }
 
         let encryption_time = encryption_start.elapsed();
@@ -114,6 +111,7 @@ mod new_laconic_ot_tests {
 
     const MAX_DEGREE: usize = 32;
     const NUM_OT_VALUES: usize = 32;
+    const VALUE_LENGTH: usize = 32;
 
     #[test]
     fn test_laconic_ot() {
@@ -142,7 +140,6 @@ mod new_laconic_ot_tests {
         // --------------------
 
         // Set up pairs of circuit keys for receiver to choose from
-        const VALUE_LENGTH: usize = 32;
         let circuit_keys: Vec<PlaintextTuple> = (0..NUM_OT_VALUES)
             .map(|_| {
                 (
