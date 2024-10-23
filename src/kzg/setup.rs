@@ -4,7 +4,6 @@
 //!
 //! The only supported format is the Snark JS `ptau` trusted setup file format.
 
-#![allow(clippy::type_complexity)]
 use ark_ec::{pairing::Pairing, AffineRepr};
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize, Compress};
 use ark_std::{io::Cursor, vec::Vec};
@@ -19,6 +18,9 @@ const N_SECTIONS: usize = 11;
 const METADATA_LEN: usize = 12;
 /// Section header length in bytes.
 const SECTION_HEADER_LEN: usize = 12;
+
+/// G1 and G2 powers of tau tuple type alias.
+pub type PowersOfTau<E> = (Vec<<E as Pairing>::G1>, Vec<<E as Pairing>::G2>);
 
 /// Section ID
 #[repr(u8)]
@@ -344,9 +346,7 @@ pub fn verify_metadata(file_data: &[u8]) -> Result<(), SetupFileError> {
 }
 
 /// Returns the G1 and G2 powers of tau.
-pub fn get_powers_from_file<E: Pairing>(
-    file: &str,
-) -> Result<(Vec<E::G1>, Vec<E::G2>), SetupFileError> {
+pub fn get_powers_from_file<E: Pairing>(file: &str) -> Result<PowersOfTau<E>, SetupFileError> {
     let file_data = FileLoader::new(PathBuf::from(file)).load()?;
     verify_metadata(&file_data)?;
 
