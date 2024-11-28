@@ -1,8 +1,6 @@
-//! # Trusted Setup File Parser
+//! # Powers of Tau File Parser
 //!
-//! This module provides the functionality to obtain the necessary data for initializing a KZG commitment scheme from a trusted setup output file.
-//!
-//! The only supported format is the Snark JS `ptau` trusted setup file format.
+//! This module provides the functionality to obtain the necessary data for initializing a KZG commitment scheme from a Snark JS Powers of Tau trusted setup output file.
 
 use ark_ec::{pairing::Pairing, AffineRepr};
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize, Compress};
@@ -20,7 +18,7 @@ const METADATA_LEN: usize = 12;
 const SECTION_HEADER_LEN: usize = 12;
 
 /// G1 and G2 powers of tau tuple type alias.
-pub type PowersOfTau<E> = (Vec<<E as Pairing>::G1>, Vec<<E as Pairing>::G2>);
+pub type PowersOfTau<E> = (Vec<<E as Pairing>::G1Affine>, Vec<<E as Pairing>::G2Affine>);
 
 /// Section ID
 #[repr(u8)]
@@ -231,7 +229,7 @@ impl HeaderSection {
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct TauG1Section<E: Pairing> {
     /// Powers of tau in G1 - [tau^i]_1
-    powers: Vec<E::G1>,
+    powers: Vec<E::G1Affine>,
 }
 
 impl<E: Pairing> TauG1Section<E> {
@@ -257,7 +255,7 @@ impl<E: Pairing> TauG1Section<E> {
         }
 
         // Deserialize
-        let mut powers: Vec<<E as Pairing>::G1> = Vec::new();
+        let mut powers = Vec::new();
         for chunk in file_data
             [section_info.position..section_info.position + section_info.size as usize]
             .chunks_exact(element_size)
@@ -268,7 +266,7 @@ impl<E: Pairing> TauG1Section<E> {
             let element = E::G1Affine::deserialize_uncompressed_unchecked(&mut reader)
                 .map_err(|e| SetupFileError::ParseError(e.to_string()))?;
 
-            powers.push(element.into());
+            powers.push(element);
         }
 
         Ok(Self { powers })
@@ -279,7 +277,7 @@ impl<E: Pairing> TauG1Section<E> {
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct TauG2Section<E: Pairing> {
     /// Powers of tau in G2 - [tau^i]_2
-    powers: Vec<E::G2>,
+    powers: Vec<E::G2Affine>,
 }
 
 impl<E: Pairing> TauG2Section<E> {
@@ -305,7 +303,7 @@ impl<E: Pairing> TauG2Section<E> {
         }
 
         // Deserialize
-        let mut powers: Vec<<E as Pairing>::G2> = Vec::new();
+        let mut powers = Vec::new();
         for chunk in file_data
             [section_info.position..section_info.position + section_info.size as usize]
             .chunks_exact(element_size)
@@ -316,7 +314,7 @@ impl<E: Pairing> TauG2Section<E> {
             let element = E::G2Affine::deserialize_uncompressed_unchecked(&mut reader)
                 .map_err(|e| SetupFileError::ParseError(e.to_string()))?;
 
-            powers.push(element.into());
+            powers.push(element);
         }
 
         Ok(Self { powers })

@@ -2,7 +2,10 @@
 //!
 //! This module contains the implementation of an Extractable Witness Encryption from an Extractable Witness KEM.
 
-use crate::kem::{self, KEMError};
+use crate::{
+    kem::{self, KEMError},
+    kzg::KZGSetup,
+};
 use ark_ec::pairing::Pairing;
 use ark_std::vec::Vec;
 
@@ -14,22 +17,23 @@ pub type Ciphertext<E> = (<E as Pairing>::G2, Vec<u8>);
 /// - `key_ct`: used to generate the decryption key.
 /// - `msg_ct`: the encrypted message.
 pub fn encrypt<E: Pairing>(
+    rng: &mut impl rand::Rng,
+    kzg_setup: &KZGSetup<E>,
     com: E::G1,
     point: E::ScalarField,
     value: E::ScalarField,
     msg: &[u8],
-    tau_g2: &E::G2,
 ) -> Result<Ciphertext<E>, KEMError> {
     // Generate a key and the corresponding key ciphertext
     // (ct_1, k) <- Encap(x)
-    let (key_ct, mut key_stream) = kem::encapsulate::<E>(com, point, value, tau_g2)?;
+    let (key_ct, key) = kem::encapsulate::<E>(rng, kzg_setup, com, point, value, msg.len())?;
 
     // ct_2 <- Enc(k, m)
     let mut msg_ct = vec![0u8; msg.len()];
-    key_stream.fill(&mut msg_ct);
-    for i in 0..msg.len() {
-        msg_ct[i] ^= msg[i];
-    }
+    msg_ct
+        .iter_mut()
+        .zip(key.iter().zip(msg.iter()))
+        .for_each(|(out, (&k, &m))| *out = k ^ m);
 
     // (ct_1, ct_2)
     Ok((key_ct, msg_ct))
@@ -37,18 +41,15 @@ pub fn encrypt<E: Pairing>(
 
 /// Decrypts a ciphertext with a proof.
 /// Returns the decrypted message.
-pub fn decrypt<E: Pairing>(proof: E::G1, ct: Ciphertext<E>) -> Result<Vec<u8>, KEMError> {
-    let (key_ct, msg_ct) = ct;
+pub fn decrypt<E: Pairing>(proof: E::G1, ct: &Ciphertext<E>) -> Result<Vec<u8>, KEMError> {
+    let mut key = kem::decapsulate::<E>(proof, ct.0, ct.1.len())?;
 
-    // k = Decap(w, ct_1)
-    let mut key_stream = kem::decapsulate::<E>(proof, key_ct)?;
-
-    // m = Dec(k, ct_2)
-    let mut msg = vec![0u8; msg_ct.len()];
-    key_stream.fill(&mut msg);
-    for i in 0..msg_ct.len() {
-        msg[i] ^= msg_ct[i];
-    }
+    // Decrypt
+    let msg: Vec<u8> = key
+        .iter_mut()
+        .zip(ct.1.iter())
+        .map(|(k, &c)| *k ^ c)
+        .collect();
 
     Ok(msg)
 }
@@ -56,20 +57,20 @@ pub fn decrypt<E: Pairing>(proof: E::G1, ct: Ciphertext<E>) -> Result<Vec<u8>, K
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::kzg::KZG;
+    use crate::kzg::{commit, open, KZGSetup};
     use ark_bls12_381::{Bls12_381, Fr};
     use ark_poly::{univariate::DensePolynomial, DenseUVPolynomial, Polynomial};
     use ark_std::{rand::Rng, test_rng, UniformRand};
 
-    fn setup_kzg(rng: &mut impl Rng) -> KZG<Bls12_381> {
+    fn setup_kzg(rng: &mut impl Rng) -> KZGSetup<Bls12_381> {
         let secret = Fr::rand(rng);
-        KZG::<Bls12_381>::setup(secret, 10)
+        KZGSetup::<Bls12_381>::setup(secret, 10)
     }
 
     #[test]
     fn test_encrypt() {
         let rng = &mut test_rng();
-        let kzg = setup_kzg(rng);
+        let kzg_setup = setup_kzg(rng);
 
         // p(x) = 7 x^4 + 9 x^3 - 5 x^2 - 25 x - 24
         let p = DensePolynomial::from_coefficients_slice(&[
@@ -82,15 +83,15 @@ mod tests {
 
         let point: Fr = Fr::rand(rng);
         let val = p.evaluate(&point);
-        let commitment = kzg.commit(&p).unwrap();
+        let commitment = commit(&kzg_setup, &p).unwrap();
 
         let msg = b"helloworld";
 
-        let ct = encrypt::<Bls12_381>(commitment, point, val, msg, kzg.tau_g2()).unwrap();
+        let ct = encrypt::<Bls12_381>(rng, &kzg_setup, commitment, point, val, msg).unwrap();
 
-        let proof = kzg.open(&p, &point).unwrap();
+        let proof = open(&kzg_setup, &p, &point).unwrap();
 
-        let decrypted_msg = decrypt::<Bls12_381>(proof, ct).unwrap();
+        let decrypted_msg = decrypt::<Bls12_381>(proof, &ct).unwrap();
 
         assert_eq!(msg.to_vec(), decrypted_msg);
     }
@@ -98,7 +99,7 @@ mod tests {
     #[test]
     fn test_decrypt_invalid_proof() {
         let rng = &mut test_rng();
-        let kzg = setup_kzg(rng);
+        let kzg_setup = setup_kzg(rng);
 
         // p(x) = 7 x^4 + 9 x^3 - 5 x^2 - 25 x - 24
         let p = DensePolynomial::from_coefficients_slice(&[
@@ -111,15 +112,14 @@ mod tests {
 
         let point: Fr = Fr::rand(rng);
         let val = p.evaluate(&point);
-        let commitment = kzg.commit(&p).unwrap();
-
+        let commitment = commit(&kzg_setup, &p).unwrap();
         let msg = b"helloworld";
-        let ct = encrypt::<Bls12_381>(commitment, point, val, msg, kzg.tau_g2()).unwrap();
+        let ct = encrypt::<Bls12_381>(rng, &kzg_setup, commitment, point, val, msg).unwrap();
 
         let wrong_point: Fr = Fr::rand(rng);
-        let invalid_proof = kzg.open(&p, &wrong_point).unwrap();
+        let invalid_proof = open(&kzg_setup, &p, &wrong_point).unwrap();
 
-        let decrypted_msg = decrypt::<Bls12_381>(invalid_proof, ct).unwrap();
+        let decrypted_msg = decrypt::<Bls12_381>(invalid_proof, &ct).unwrap();
 
         assert_ne!(msg.to_vec(), decrypted_msg);
     }

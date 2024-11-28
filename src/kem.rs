@@ -2,36 +2,33 @@
 //!
 //! This module implements the **Extractable Witness Key Encapsulation Mechanism** functions.
 
-use crate::kzg::{g1_gen, g2_gen};
+use crate::kzg::KZGSetup;
 use ark_ec::pairing::Pairing;
+use ark_ec::AffineRepr;
 use ark_serialize::CanonicalSerialize;
 use ark_std::{ops::Mul, vec::Vec, UniformRand};
-use blake3::OutputReader;
-use rand::{rngs::SmallRng, SeedableRng};
 use thiserror::Error;
 
 /// Encapsulation.
 /// Generates a key for a commitment and a point-value pair.
 pub fn encapsulate<E: Pairing>(
+    rng: &mut impl rand::Rng,
+    kzg_setup: &KZGSetup<E>,
     commitment: E::G1,
     point: E::ScalarField,
     value: E::ScalarField,
-    tau_g2: &E::G2,
-) -> Result<(E::G2, OutputReader), KEMError> {
-    // [beta]_1
-    let value_in_g1: E::G1 = g1_gen::<E>().mul(value);
-
+    msg_len: usize,
+) -> Result<(E::G2, Vec<u8>), KEMError> {
     // (com - [beta]_1)
-    let com_beta = commitment - value_in_g1;
+    let com_beta = commitment - E::G1Affine::generator().mul(value);
 
     // Generate a random value
     // This allows the generated secret not to be tied to the inputs.
-    let mut rng = SmallRng::from_entropy();
-    let r = E::ScalarField::rand(&mut rng);
+    let r = E::ScalarField::rand(rng);
 
     // Calculate secret
     // s = e(r * (com - [beta]_1), g2)
-    let secret = E::pairing(com_beta.mul(r), g2_gen::<E>());
+    let secret = E::pairing(com_beta.mul(r), E::G2Affine::generator());
     let mut secret_bytes = Vec::<u8>::new();
     secret
         .serialize_uncompressed(&mut secret_bytes)
@@ -39,24 +36,31 @@ pub fn encapsulate<E: Pairing>(
 
     // Calculate a ciphertext to share the randomness used in the encapsulation.
     // ct = r([tau]_2 - [alpha]_2)
-    let tau_alpha: E::G2 = *tau_g2 - g2_gen::<E>().mul(point);
+    let tau_alpha: E::G2 = *kzg_setup.tau_g2() - E::G2Affine::generator().mul(point);
     let ciphertext: E::G2 = tau_alpha.mul(r);
 
     // Generate the key
     // Hash the secret to make the key indistinguishable from random.
     // k = H(s)
-    let mut key_hasher = blake3::Hasher::new();
-    key_hasher.update(&secret_bytes);
+    let mut hasher = blake3::Hasher::new();
+    hasher.update(&secret_bytes);
+
+    let mut key = vec![0u8; msg_len];
+    hasher.finalize_xof().fill(key.as_mut_slice());
 
     // Return the key as a hash reader to enable custom key length.
     // (ct, k)
-    Ok((ciphertext, key_hasher.finalize_xof()))
+    Ok((ciphertext, key))
 }
 
 /// Decapsulation.
 /// Generates a key for an opening and a ciphertext.
 /// The generated key will be the same as the one generated during encapsulation for a valid opening.
-pub fn decapsulate<E: Pairing>(proof: E::G1, ciphertext: E::G2) -> Result<OutputReader, KEMError> {
+pub fn decapsulate<E: Pairing>(
+    proof: E::G1,
+    ciphertext: E::G2,
+    msg_len: usize,
+) -> Result<Vec<u8>, KEMError> {
     // Calculate secret
     // s = e(proof, ct)
     let secret = E::pairing(proof, ciphertext);
@@ -68,11 +72,14 @@ pub fn decapsulate<E: Pairing>(proof: E::G1, ciphertext: E::G2) -> Result<Output
 
     // Get the key
     // k = H(s)
-    let mut key_hasher = blake3::Hasher::new();
-    key_hasher.update(&secret_bytes);
+    let mut hasher = blake3::Hasher::new();
+    hasher.update(&secret_bytes);
+
+    let mut key = vec![0u8; msg_len];
+    hasher.finalize_xof().fill(key.as_mut_slice());
 
     // Return the key as a hash reader to enable custom key length.
-    Ok(key_hasher.finalize_xof())
+    Ok(key)
 }
 
 #[derive(Error, Debug, PartialEq, Eq)]
@@ -88,20 +95,20 @@ pub enum KEMError {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::kzg::KZG;
+    use crate::kzg::{commit, open, KZGSetup};
     use ark_bls12_381::{Bls12_381, Fr};
     use ark_poly::{univariate::DensePolynomial, DenseUVPolynomial, Polynomial};
     use ark_std::{rand::Rng, test_rng};
 
-    fn setup_kzg(rng: &mut impl Rng) -> KZG<Bls12_381> {
+    fn setup_kzg(rng: &mut impl Rng) -> KZGSetup<Bls12_381> {
         let secret = Fr::rand(rng);
-        KZG::<Bls12_381>::setup(secret, 10)
+        KZGSetup::<Bls12_381>::setup(secret, 10)
     }
 
     #[test]
     fn test_encapsulation_decapsulation() {
         let rng = &mut test_rng();
-        let kzg = setup_kzg(rng);
+        let kzg_setup = setup_kzg(rng);
 
         // p(x) = 7 x^4 + 9 x^3 - 5 x^2 - 25 x - 24
         let p = DensePolynomial::from_coefficients_slice(&[
@@ -114,28 +121,25 @@ mod tests {
 
         let point: Fr = Fr::rand(rng);
         let eval = p.evaluate(&point);
-        let commitment = kzg.commit(&p).unwrap();
+        let commitment = commit(&kzg_setup, &p).unwrap();
+        let test_msg = [0u8; 32];
 
         // Encapsulate
-        let (ciphertext, mut enc_key) =
-            encapsulate::<Bls12_381>(commitment, point, eval, kzg.tau_g2()).unwrap();
-        let mut enc_key_bytes = [0u8; 32];
-        enc_key.fill(&mut enc_key_bytes);
+        let (ciphertext, enc_key) =
+            encapsulate(rng, &kzg_setup, commitment, point, eval, test_msg.len()).unwrap();
 
         // Decapsulate
-        let proof = kzg.open(&p, &point).unwrap();
-        let mut dec_key = decapsulate::<Bls12_381>(proof, ciphertext).unwrap();
-        let mut dec_key_bytes = [0u8; 32];
-        dec_key.fill(&mut dec_key_bytes);
+        let proof = open(&kzg_setup, &p, &point).unwrap();
+        let dec_key = decapsulate::<Bls12_381>(proof, ciphertext, test_msg.len()).unwrap();
 
         // Assert that the keys match
-        assert_eq!(enc_key_bytes, dec_key_bytes);
+        assert_eq!(enc_key, dec_key);
     }
 
     #[test]
     fn test_decapsulation_invalid_proof() {
         let rng = &mut test_rng();
-        let kzg = setup_kzg(rng);
+        let kzg_setup = setup_kzg(rng);
 
         // p(x) = 7 x^4 + 9 x^3 - 5 x^2 - 25 x - 24
         let p = DensePolynomial::from_coefficients_slice(&[
@@ -148,13 +152,12 @@ mod tests {
 
         let point: Fr = Fr::rand(rng);
         let eval = p.evaluate(&point);
-        let commitment = kzg.commit(&p).unwrap();
+        let commitment = commit(&kzg_setup, &p).unwrap();
+        let test_msg = [0u8; 32];
 
         // Encapsulate
-        let (ciphertext, mut enc_key) =
-            encapsulate::<Bls12_381>(commitment, point, eval, kzg.tau_g2()).unwrap();
-        let mut enc_key_bytes = [0u8; 32];
-        enc_key.fill(&mut enc_key_bytes);
+        let (ciphertext, enc_key) =
+            encapsulate(rng, &kzg_setup, commitment, point, eval, test_msg.len()).unwrap();
 
         // Decapsulate with a different polynomial
         // q(x) = 7 x^4 + 9 x^3 - 5 x^2 - 29 x - 24
@@ -166,19 +169,17 @@ mod tests {
             Fr::from(7),
         ]);
 
-        let invalid_proof = kzg.open(&q, &point).unwrap();
-        let mut dec_key = decapsulate::<Bls12_381>(invalid_proof, ciphertext).unwrap();
-        let mut dec_key_bytes = [0u8; 32];
-        dec_key.fill(&mut dec_key_bytes);
+        let invalid_proof = open(&kzg_setup, &q, &point).unwrap();
+        let dec_key = decapsulate::<Bls12_381>(invalid_proof, ciphertext, test_msg.len()).unwrap();
 
         // Keys should not match
-        assert_ne!(enc_key_bytes, dec_key_bytes);
+        assert_ne!(enc_key, dec_key);
     }
 
     #[test]
     fn test_decapsulation_invalid_ciphertext() {
         let rng = &mut test_rng();
-        let kzg = setup_kzg(rng);
+        let kzg_setup = setup_kzg(rng);
 
         // p(x) = 7 x^4 + 9 x^3 - 5 x^2 - 25 x - 24
         let p = DensePolynomial::from_coefficients_slice(&[
@@ -190,32 +191,29 @@ mod tests {
         ]);
         let point: Fr = Fr::rand(rng);
         let eval = p.evaluate(&point);
-        let commitment = kzg.commit(&p).unwrap();
+        let commitment = commit(&kzg_setup, &p).unwrap();
+        let test_msg = [0u8; 32];
 
         // Encapsulate
-        let (ciphertext, mut enc_key) =
-            encapsulate::<Bls12_381>(commitment, point, eval, kzg.tau_g2()).unwrap();
-        let mut enc_key_bytes = [0u8; 32];
-        enc_key.fill(&mut enc_key_bytes);
+        let (ciphertext, enc_key) =
+            encapsulate(rng, &kzg_setup, commitment, point, eval, test_msg.len()).unwrap();
 
         // Generate an random ciphertext
         let invalid_ciphertext = ciphertext.mul(Fr::rand(rng));
 
         // Attempt to decapsulate with the invalid ciphertext
-        let proof = kzg.open(&p, &point).unwrap();
+        let proof = open(&kzg_setup, &p, &point).unwrap();
 
-        let mut dec_key = decapsulate::<Bls12_381>(proof, invalid_ciphertext).unwrap();
-        let mut dec_key_bytes = [0u8; 32];
-        dec_key.fill(&mut dec_key_bytes);
+        let dec_key = decapsulate::<Bls12_381>(proof, invalid_ciphertext, test_msg.len()).unwrap();
 
         // Keys should not match
-        assert_ne!(enc_key_bytes, dec_key_bytes);
+        assert_ne!(enc_key, dec_key);
     }
 
     #[test]
     fn test_decapsulation_wrong_point() {
         let rng = &mut test_rng();
-        let kzg = setup_kzg(rng);
+        let kzg_setup = setup_kzg(rng);
 
         // p(x) = 7 x^4 + 9 x^3 - 5 x^2 - 25 x - 24
         let p = DensePolynomial::from_coefficients_slice(&[
@@ -228,24 +226,21 @@ mod tests {
 
         let point1: Fr = Fr::rand(rng);
         let val1 = p.evaluate(&point1);
-        let commitment = kzg.commit(&p).unwrap();
+        let commitment = commit(&kzg_setup, &p).unwrap();
+        let test_msg = [0u8; 32];
 
         // Encapsulate with point1
-        let (ciphertext1, mut enc_key) =
-            encapsulate::<Bls12_381>(commitment, point1, val1, kzg.tau_g2()).unwrap();
-        let mut enc_key_bytes = [0u8; 32];
-        enc_key.fill(&mut enc_key_bytes);
+        let (ciphertext1, enc_key) =
+            encapsulate(rng, &kzg_setup, commitment, point1, val1, test_msg.len()).unwrap();
 
         // Proof for point2
         let point2: Fr = Fr::rand(rng);
-        let proof2 = kzg.open(&p, &point2).unwrap();
+        let proof2 = open(&kzg_setup, &p, &point2).unwrap();
 
         // Decapsulate with proof for point2
-        let mut dec_key = decapsulate::<Bls12_381>(proof2, ciphertext1).unwrap();
-        let mut dec_key_bytes = [0u8; 32];
-        dec_key.fill(&mut dec_key_bytes);
+        let dec_key = decapsulate::<Bls12_381>(proof2, ciphertext1, test_msg.len()).unwrap();
 
         // Keys should not match
-        assert_ne!(enc_key_bytes, dec_key_bytes);
+        assert_ne!(enc_key, dec_key);
     }
 }
