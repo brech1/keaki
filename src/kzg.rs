@@ -59,10 +59,10 @@ impl<E: Pairing> KZGSetup<E> {
 
     /// Setup from secret. Don't use this.
     pub fn setup(secret: E::ScalarField, max_d: usize) -> Self {
-        let mut g1_pow: Vec<<E as Pairing>::G1> = Vec::with_capacity(max_d + 1);
+        let mut g1_pow: Vec<<E as Pairing>::G1> = Vec::with_capacity(max_d);
         let tau_g2 = E::G2Affine::generator().mul(secret);
 
-        for i in 0..=max_d {
+        for i in 0..max_d {
             g1_pow.push(E::G1Affine::generator().mul(secret.pow([i as u64])));
         }
 
@@ -175,7 +175,7 @@ pub fn open_fk<E: Pairing>(
     // s = ([s[d−1]], [s[d−2]], ..., [s], [1], [0], [0], ..., [0])
     // d neutral elements at the end
     let mut s: Vec<<E as Pairing>::G1> = vec![E::G1::zero(); 2 * d];
-    s[..d].clone_from_slice(
+    s[..d].copy_from_slice(
         &setup.g1_pow()[..d]
             .iter()
             .rev()
@@ -258,12 +258,12 @@ mod tests {
     fn test_kzg_setup() {
         let rng = &mut test_rng();
         let secret = Fr::rand(rng);
-        let max_degree = 3;
+        let max_degree = 4;
         let kzg_setup = KZGSetup::<Bls12_381>::setup(secret, max_degree);
 
         // G1
-        assert_eq!(kzg_setup.g1_pow.len(), max_degree + 1);
-        for i in 0..=max_degree {
+        assert_eq!(kzg_setup.g1_pow.len(), max_degree);
+        for i in 0..max_degree {
             assert_eq!(
                 kzg_setup.g1_pow[i],
                 g1_gen::<Bls12_381>().mul(secret.pow([i as u64]))
@@ -290,7 +290,7 @@ mod tests {
     fn test_kzg_commit() {
         let rng = &mut test_rng();
         let secret = Fr::rand(rng);
-        let max_degree = 2;
+        let max_degree = 4;
         let kzg_setup = KZGSetup::<Bls12_381>::setup(secret, max_degree);
 
         // 2 x^2 + 3 x + 1
@@ -319,7 +319,7 @@ mod tests {
         ]);
 
         let result = commit(&kzg_setup, &p);
-        let expected_err = KZGError::PolynomialTooLarge(p.len(), max_degree + 1);
+        let expected_err = KZGError::PolynomialTooLarge(p.len(), max_degree);
 
         assert_eq!(result, Err(expected_err));
     }
@@ -350,7 +350,7 @@ mod tests {
         let quotient = numerator.div(&denominator);
 
         let result = open(&kzg_setup, &p, &point);
-        let expected_err = KZGError::PolynomialTooLarge(quotient.len(), max_degree + 1);
+        let expected_err = KZGError::PolynomialTooLarge(quotient.len(), max_degree);
 
         assert_eq!(result, Err(expected_err));
     }
@@ -359,7 +359,7 @@ mod tests {
     fn test_kzg_open_and_verify() {
         let rng = &mut test_rng();
         let secret = Fr::rand(rng);
-        let max_degree = 2;
+        let max_degree = 4;
         let kzg_setup = KZGSetup::<Bls12_381>::setup(secret, max_degree);
 
         // 2 x^2 + 3 x + 1
@@ -382,7 +382,7 @@ mod tests {
     fn test_kzg_verify_wrong_alpha() {
         let rng = &mut test_rng();
         let secret = Fr::rand(rng);
-        let max_degree = 4;
+        let max_degree = 8;
         let kzg_setup = KZGSetup::<Bls12_381>::setup(secret, max_degree);
 
         // p(x) = 7 x^4 + 9 x^3 - 5 x^2 - 25 x - 24
@@ -414,7 +414,7 @@ mod tests {
     fn test_kzg_verify_wrong_beta() {
         let rng = &mut test_rng();
         let secret = Fr::rand(rng);
-        let max_degree = 4;
+        let max_degree = 8;
         let kzg_setup = KZGSetup::<Bls12_381>::setup(secret, max_degree);
 
         // p(x) = 7 x^4 + 9 x^3 - 5 x^2 - 25 x - 24
@@ -446,7 +446,7 @@ mod tests {
     fn test_kzg_verify_wrong_proof() {
         let rng = &mut test_rng();
         let secret = Fr::rand(rng);
-        let max_degree = 4;
+        let max_degree = 8;
         let kzg_setup = KZGSetup::<Bls12_381>::setup(secret, max_degree);
 
         // p(x) = 7 x^4 + 9 x^3 - 5 x^2 - 25 x - 24
@@ -486,7 +486,7 @@ mod tests {
     fn test_kzg_verify_wrong_commitment() {
         let rng = &mut test_rng();
         let secret = Fr::rand(rng);
-        let max_degree = 4;
+        let max_degree = 8;
         let kzg_setup = KZGSetup::<Bls12_381>::setup(secret, max_degree);
 
         // p(x) = 7 x^4 + 9 x^3 - 5 x^2 - 25 x - 24
@@ -519,7 +519,7 @@ mod tests {
     fn test_kzg_open_fk() {
         let rng = &mut test_rng();
         let secret = Fr::rand(rng);
-        let max_degree = 20;
+        let max_degree = 16;
         let kzg_setup = KZGSetup::<Bls12_381>::setup(secret, max_degree);
 
         // Create commitment polynomial
