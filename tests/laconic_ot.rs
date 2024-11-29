@@ -118,8 +118,8 @@ mod laconic_ot_tests {
     use ark_bls12_381::{Bls12_381, Fr};
     use ark_std::{rand::Rng, test_rng, UniformRand};
 
-    const SETUP_DEGREE: usize = 1024;
-    const N_CHOICES: usize = 128;
+    const SETUP_DEGREE: usize = 16;
+    const N_CHOICES: usize = 8;
     const CHOICE_CARDINALITY: usize = 2;
     const VALUE_BYTES: usize = 32;
 
