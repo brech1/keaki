@@ -1,9 +1,9 @@
-//! # Extractable Witness Encryption
+//! # Encryption
 //!
-//! This module contains the implementation of an Extractable Witness Encryption from an Extractable Witness KEM.
+//! This module provides functions for encrypting and decrypting messages based on the KEM.
 
 use crate::{
-    kem::{self, KEMError},
+    kem::{decapsulate, encapsulate},
     kzg::KZGSetup,
 };
 use ark_ec::pairing::Pairing;
@@ -23,10 +23,10 @@ pub fn encrypt<E: Pairing>(
     point: E::ScalarField,
     value: E::ScalarField,
     msg: &[u8],
-) -> Result<Ciphertext<E>, KEMError> {
+) -> Ciphertext<E> {
     // Generate a key and the corresponding key ciphertext
     // (ct_1, k) <- Encap(x)
-    let (key_ct, key) = kem::encapsulate::<E>(rng, kzg_setup, com, point, value, msg.len())?;
+    let (key_ct, key) = encapsulate::<E>(rng, kzg_setup, com, point, value, msg.len());
 
     // ct_2 <- Enc(k, m)
     let mut msg_ct = vec![0u8; msg.len()];
@@ -36,13 +36,13 @@ pub fn encrypt<E: Pairing>(
         .for_each(|(out, (&k, &m))| *out = k ^ m);
 
     // (ct_1, ct_2)
-    Ok((key_ct, msg_ct))
+    (key_ct, msg_ct)
 }
 
 /// Decrypts a ciphertext with a proof.
 /// Returns the decrypted message.
-pub fn decrypt<E: Pairing>(proof: E::G1, ct: &Ciphertext<E>) -> Result<Vec<u8>, KEMError> {
-    let mut key = kem::decapsulate::<E>(proof, ct.0, ct.1.len())?;
+pub fn decrypt<E: Pairing>(proof: E::G1, ct: &Ciphertext<E>) -> Vec<u8> {
+    let mut key = decapsulate::<E>(proof, ct.0, ct.1.len());
 
     // Decrypt
     let msg: Vec<u8> = key
@@ -51,7 +51,7 @@ pub fn decrypt<E: Pairing>(proof: E::G1, ct: &Ciphertext<E>) -> Result<Vec<u8>, 
         .map(|(k, &c)| *k ^ c)
         .collect();
 
-    Ok(msg)
+    msg
 }
 
 #[cfg(test)]
@@ -87,11 +87,11 @@ mod tests {
 
         let msg = b"helloworld";
 
-        let ct = encrypt::<Bls12_381>(rng, &kzg_setup, commitment, point, val, msg).unwrap();
+        let ct = encrypt::<Bls12_381>(rng, &kzg_setup, commitment, point, val, msg);
 
         let proof = open(&kzg_setup, &p, &point).unwrap();
 
-        let decrypted_msg = decrypt::<Bls12_381>(proof, &ct).unwrap();
+        let decrypted_msg = decrypt::<Bls12_381>(proof, &ct);
 
         assert_eq!(msg.to_vec(), decrypted_msg);
     }
@@ -114,12 +114,12 @@ mod tests {
         let val = p.evaluate(&point);
         let commitment = commit(&kzg_setup, &p).unwrap();
         let msg = b"helloworld";
-        let ct = encrypt::<Bls12_381>(rng, &kzg_setup, commitment, point, val, msg).unwrap();
+        let ct = encrypt::<Bls12_381>(rng, &kzg_setup, commitment, point, val, msg);
 
         let wrong_point: Fr = Fr::rand(rng);
         let invalid_proof = open(&kzg_setup, &p, &wrong_point).unwrap();
 
-        let decrypted_msg = decrypt::<Bls12_381>(invalid_proof, &ct).unwrap();
+        let decrypted_msg = decrypt::<Bls12_381>(invalid_proof, &ct);
 
         assert_ne!(msg.to_vec(), decrypted_msg);
     }

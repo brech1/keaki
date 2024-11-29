@@ -7,7 +7,6 @@ use ark_ec::pairing::Pairing;
 use ark_ec::AffineRepr;
 use ark_serialize::CanonicalSerialize;
 use ark_std::{ops::Mul, vec::Vec, UniformRand};
-use thiserror::Error;
 
 /// Encapsulation.
 /// Generates a key for a commitment and a point-value pair.
@@ -18,7 +17,7 @@ pub fn encapsulate<E: Pairing>(
     point: E::ScalarField,
     value: E::ScalarField,
     msg_len: usize,
-) -> Result<(E::G2, Vec<u8>), KEMError> {
+) -> (E::G2, Vec<u8>) {
     // (com - [beta]_1)
     let com_beta = commitment - E::G1Affine::generator().mul(value);
 
@@ -30,9 +29,7 @@ pub fn encapsulate<E: Pairing>(
     // s = e(r * (com - [beta]_1), g2)
     let secret = E::pairing(com_beta.mul(r), E::G2Affine::generator());
     let mut secret_bytes = Vec::<u8>::new();
-    secret
-        .serialize_uncompressed(&mut secret_bytes)
-        .map_err(|e| KEMError::SerializationError(e.to_string()))?;
+    secret.serialize_uncompressed(&mut secret_bytes).unwrap();
 
     // Calculate a ciphertext to share the randomness used in the encapsulation.
     // ct = r([tau]_2 - [alpha]_2)
@@ -48,27 +45,20 @@ pub fn encapsulate<E: Pairing>(
     let mut key = vec![0u8; msg_len];
     hasher.finalize_xof().fill(key.as_mut_slice());
 
-    // Return the key as a hash reader to enable custom key length.
     // (ct, k)
-    Ok((ciphertext, key))
+    (ciphertext, key)
 }
 
 /// Decapsulation.
 /// Generates a key for an opening and a ciphertext.
 /// The generated key will be the same as the one generated during encapsulation for a valid opening.
-pub fn decapsulate<E: Pairing>(
-    proof: E::G1,
-    ciphertext: E::G2,
-    msg_len: usize,
-) -> Result<Vec<u8>, KEMError> {
+pub fn decapsulate<E: Pairing>(proof: E::G1, ciphertext: E::G2, msg_len: usize) -> Vec<u8> {
     // Calculate secret
     // s = e(proof, ct)
     let secret = E::pairing(proof, ciphertext);
 
     let mut secret_bytes = Vec::<u8>::new();
-    secret
-        .serialize_uncompressed(&mut secret_bytes)
-        .map_err(|e| KEMError::SerializationError(e.to_string()))?;
+    secret.serialize_uncompressed(&mut secret_bytes).unwrap();
 
     // Get the key
     // k = H(s)
@@ -78,18 +68,7 @@ pub fn decapsulate<E: Pairing>(
     let mut key = vec![0u8; msg_len];
     hasher.finalize_xof().fill(key.as_mut_slice());
 
-    // Return the key as a hash reader to enable custom key length.
-    Ok(key)
-}
-
-#[derive(Error, Debug, PartialEq, Eq)]
-pub enum KEMError {
-    #[error("Proofs and ciphertexts sets must have the same length")]
-    DecapsulationInputsLengthError,
-    #[error("Points and values sets must have the same length")]
-    EncapsulationInputsLengthError,
-    #[error("Secret serialization failed {0}")]
-    SerializationError(String),
+    key
 }
 
 #[cfg(test)]
@@ -126,11 +105,11 @@ mod tests {
 
         // Encapsulate
         let (ciphertext, enc_key) =
-            encapsulate(rng, &kzg_setup, commitment, point, eval, test_msg.len()).unwrap();
+            encapsulate(rng, &kzg_setup, commitment, point, eval, test_msg.len());
 
         // Decapsulate
         let proof = open(&kzg_setup, &p, &point).unwrap();
-        let dec_key = decapsulate::<Bls12_381>(proof, ciphertext, test_msg.len()).unwrap();
+        let dec_key = decapsulate::<Bls12_381>(proof, ciphertext, test_msg.len());
 
         // Assert that the keys match
         assert_eq!(enc_key, dec_key);
@@ -157,7 +136,7 @@ mod tests {
 
         // Encapsulate
         let (ciphertext, enc_key) =
-            encapsulate(rng, &kzg_setup, commitment, point, eval, test_msg.len()).unwrap();
+            encapsulate(rng, &kzg_setup, commitment, point, eval, test_msg.len());
 
         // Decapsulate with a different polynomial
         // q(x) = 7 x^4 + 9 x^3 - 5 x^2 - 29 x - 24
@@ -170,7 +149,7 @@ mod tests {
         ]);
 
         let invalid_proof = open(&kzg_setup, &q, &point).unwrap();
-        let dec_key = decapsulate::<Bls12_381>(invalid_proof, ciphertext, test_msg.len()).unwrap();
+        let dec_key = decapsulate::<Bls12_381>(invalid_proof, ciphertext, test_msg.len());
 
         // Keys should not match
         assert_ne!(enc_key, dec_key);
@@ -196,7 +175,7 @@ mod tests {
 
         // Encapsulate
         let (ciphertext, enc_key) =
-            encapsulate(rng, &kzg_setup, commitment, point, eval, test_msg.len()).unwrap();
+            encapsulate(rng, &kzg_setup, commitment, point, eval, test_msg.len());
 
         // Generate an random ciphertext
         let invalid_ciphertext = ciphertext.mul(Fr::rand(rng));
@@ -204,7 +183,7 @@ mod tests {
         // Attempt to decapsulate with the invalid ciphertext
         let proof = open(&kzg_setup, &p, &point).unwrap();
 
-        let dec_key = decapsulate::<Bls12_381>(proof, invalid_ciphertext, test_msg.len()).unwrap();
+        let dec_key = decapsulate::<Bls12_381>(proof, invalid_ciphertext, test_msg.len());
 
         // Keys should not match
         assert_ne!(enc_key, dec_key);
@@ -231,14 +210,14 @@ mod tests {
 
         // Encapsulate with point1
         let (ciphertext1, enc_key) =
-            encapsulate(rng, &kzg_setup, commitment, point1, val1, test_msg.len()).unwrap();
+            encapsulate(rng, &kzg_setup, commitment, point1, val1, test_msg.len());
 
         // Proof for point2
         let point2: Fr = Fr::rand(rng);
         let proof2 = open(&kzg_setup, &p, &point2).unwrap();
 
         // Decapsulate with proof for point2
-        let dec_key = decapsulate::<Bls12_381>(proof2, ciphertext1, test_msg.len()).unwrap();
+        let dec_key = decapsulate::<Bls12_381>(proof2, ciphertext1, test_msg.len());
 
         // Keys should not match
         assert_ne!(enc_key, dec_key);

@@ -26,8 +26,6 @@ pub struct KZGSetup<E: Pairing> {
     g1_aff: Vec<E::G1Affine>,
     /// [tau]_2
     tau_g2: E::G2,
-    /// Evaluation domain
-    domain: Radix2EvaluationDomain<E::ScalarField>,
 }
 
 impl<E: Pairing> KZGSetup<E> {
@@ -46,14 +44,10 @@ impl<E: Pairing> KZGSetup<E> {
             g1_pow.push(element.into());
         }
 
-        // Create evaluation domain
-        let domain = Radix2EvaluationDomain::new(g1_pow.len()).unwrap();
-
         Ok(Self {
             g1_pow,
             g1_aff,
             tau_g2,
-            domain,
         })
     }
 
@@ -67,13 +61,11 @@ impl<E: Pairing> KZGSetup<E> {
         }
 
         let g1_aff = E::G1::normalize_batch(&g1_pow);
-        let domain = Radix2EvaluationDomain::new(g1_pow.len()).unwrap();
 
         Self {
             g1_pow,
             g1_aff,
             tau_g2,
-            domain,
         }
     }
 
@@ -90,11 +82,6 @@ impl<E: Pairing> KZGSetup<E> {
     /// Returns [tau]_2
     pub fn tau_g2(&self) -> &E::G2 {
         &self.tau_g2
-    }
-
-    /// Returns the evaluation domain.
-    pub fn domain(&self) -> &Radix2EvaluationDomain<E::ScalarField> {
-        &self.domain
     }
 }
 
@@ -166,11 +153,14 @@ pub fn verify<E: Pairing>(
 /// Computes n openings using the FK23 algorithm.
 /// The amount of openings will depend on the length of the polynomial.
 /// The openings points are the roots of unity of the domain.
+/// - `domain_d` is an evaluation domain of size d.
 pub fn open_fk<E: Pairing>(
     setup: &KZGSetup<E>,
     p: &[E::ScalarField],
+    domain_d: &Radix2EvaluationDomain<E::ScalarField>,
 ) -> Result<Vec<E::G1>, KZGError> {
     let d = p.len();
+    let domain_2d = Radix2EvaluationDomain::<<E as Pairing>::ScalarField>::new(2 * d).unwrap();
 
     // s = ([s[d−1]], [s[d−2]], ..., [s], [1], [0], [0], ..., [0])
     // d neutral elements at the end
@@ -187,10 +177,6 @@ pub fn open_fk<E: Pairing>(
     // d neutral elements at the beginning
     let mut a: Vec<<E as Pairing>::ScalarField> = vec![E::ScalarField::zero(); 2 * d];
     a[d..].copy_from_slice(p);
-
-    // Create domain
-    let domain_2d = Radix2EvaluationDomain::<<E as Pairing>::ScalarField>::new(2 * d)
-        .ok_or(KZGError::DomainCreationError)?;
 
     // hat_s = DFT_2d(s)
     let hat_s = domain_2d.fft(&s);
@@ -211,46 +197,21 @@ pub fn open_fk<E: Pairing>(
     let h = h_prime[0..d].to_vec();
 
     // Evaluate h in each n-th root of unity
-    let domain = Radix2EvaluationDomain::<<E as Pairing>::ScalarField>::new(d)
-        .ok_or(KZGError::DomainCreationError)?;
-    let ct = domain.fft(&h);
+    let ct = domain_d.fft(&h);
 
     Ok(ct)
 }
 
-/// Returns the G1 generator in projective coordinates.
-pub fn g1_gen<E: Pairing>() -> E::G1 {
-    E::G1Affine::generator().into()
-}
-
-/// Returns the G2 generator in projective coordinates.
-pub fn g2_gen<E: Pairing>() -> E::G2 {
-    E::G2Affine::generator().into()
-}
-
 #[derive(Error, Debug, PartialEq, Eq)]
 pub enum KZGError {
-    #[error("G2 powers of tau are empty")]
-    G2PowersEmpty,
     #[error("Can't commit to polynomial: polynomial has degree {0} but max degree is {1}")]
     PolynomialTooLarge(usize, usize),
-    #[error("Setup file error: {0}")]
-    SetupFileError(SetupFileError),
-    #[error("Error creating domain")]
-    DomainCreationError,
-}
-
-impl From<SetupFileError> for KZGError {
-    fn from(err: SetupFileError) -> Self {
-        KZGError::SetupFileError(err)
-    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ark_bls12_381::{Bls12_381, Config as BLS12Config, Fr, G1Projective};
-    use ark_ec::{bls12::Bls12Config, short_weierstrass::SWCurveConfig};
+    use ark_bls12_381::{Bls12_381, Fr, G1Projective};
     use ark_ff::UniformRand;
     use ark_std::test_rng;
 
@@ -266,24 +227,15 @@ mod tests {
         for i in 0..max_degree {
             assert_eq!(
                 kzg_setup.g1_pow[i],
-                g1_gen::<Bls12_381>().mul(secret.pow([i as u64]))
+                <Bls12_381 as Pairing>::G1Affine::generator().mul(secret.pow([i as u64]))
             );
         }
 
         // [tau]_2
-        assert_eq!(kzg_setup.tau_g2, g2_gen::<Bls12_381>().mul(secret));
-    }
-
-    #[test]
-    fn test_generators() {
-        let expected_g1_gen = <BLS12Config as Bls12Config>::G1Config::GENERATOR;
-        let expected_g2_gen = <BLS12Config as Bls12Config>::G2Config::GENERATOR;
-
-        let g1_gen = g1_gen::<Bls12_381>();
-        let g2_gen = g2_gen::<Bls12_381>();
-
-        assert_eq!(g1_gen, expected_g1_gen);
-        assert_eq!(g2_gen, expected_g2_gen);
+        assert_eq!(
+            kzg_setup.tau_g2,
+            <Bls12_381 as Pairing>::G2Affine::generator().mul(secret)
+        );
     }
 
     #[test]
@@ -531,7 +483,9 @@ mod tests {
         ]);
 
         // Calculate proofs
-        let proofs = open_fk(&kzg_setup, &p).unwrap();
+        let domain =
+            Radix2EvaluationDomain::<<Bls12_381 as Pairing>::ScalarField>::new(p.len()).unwrap();
+        let proofs = open_fk(&kzg_setup, &p, &domain).unwrap();
 
         // Create evaluation domain
         let domain =

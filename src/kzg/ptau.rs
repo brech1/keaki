@@ -1,6 +1,6 @@
-//! # Powers of Tau File Parser
+//! # Trusted Setup File Parser
 //!
-//! This module provides the functionality to obtain the necessary data for initializing a KZG commitment scheme from a Snark JS Powers of Tau trusted setup output file.
+//! This module provides the functionality to obtain the necessary data for initializing a KZG commitment scheme from a Snark JS trusted setup `ptau` file.
 
 use ark_ec::{pairing::Pairing, AffineRepr};
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize, Compress};
@@ -363,16 +363,12 @@ pub enum SetupFileError {
     ElementSizeMismatch(u64, u64),
     #[error("Section is uninitialized: {0}")]
     EmptySection(u8),
-    #[error("Field modulus mismatch. Obtained: {0:?}, Expected: {1:?}")]
-    FieldModulusMismatch(Vec<u8>, Vec<u8>),
     #[error("File error: {0:?}")]
     FileError(String),
     #[error("Invalid file type: {0:?}")]
     InvalidFileType([u8; 4]),
     #[error("Invalid number of sections: {0:?}")]
     InvalidNumberOfSections(u32),
-    #[error("Metadata parsing error: {0}")]
-    Metadata(String),
     #[error("IO error: {0}")]
     ParseError(String),
     #[error("Unknown section ID: {0}")]
