@@ -4,35 +4,33 @@
 
 use ark_ec::pairing::Pairing;
 use ark_ff::Field;
+use ark_poly::{EvaluationDomain, Radix2EvaluationDomain};
 use keaki::{
-    vec::{VectorWE, VectorWEError},
-    we::Ciphertext,
+    enc::Ciphertext,
+    kzg::KZGSetup,
+    vec::{vec_commit, vec_decrypt, vec_encrypt, PADDING_LEN},
 };
 use std::time::Instant;
 
-/// Type alias for the plaintext tuple
-pub type PlaintextTuple = (Vec<u8>, Vec<u8>);
-/// Type alias for the ciphertext tuple
-pub type CiphertextTuple<E> = (Ciphertext<E>, Ciphertext<E>);
-
 pub struct Receiver<E: Pairing> {
     /// Receiver's choices
-    boolean_choices: Vec<E::ScalarField>,
-    /// Polynomial commitment
+    choices: Vec<E::ScalarField>,
+    /// Commitment
     commitment: E::G1,
     /// Precomputed proofs
     proofs: Vec<E::G1>,
 }
 
 impl<E: Pairing> Receiver<E> {
-    pub fn new(vec_we: &VectorWE<E>, boolean_choices: Vec<E::ScalarField>) -> Self {
-        let commitment_start = Instant::now();
-        let (commitment, proofs) = vec_we.commit(&boolean_choices).unwrap();
-        let commitment_time = commitment_start.elapsed();
-        println!("Commitment time: {:?}", commitment_time);
+    pub fn new(
+        kzg_setup: KZGSetup<E>,
+        rng: &mut impl rand::Rng,
+        choices: Vec<E::ScalarField>,
+    ) -> Self {
+        let (commitment, proofs) = vec_commit(rng, &kzg_setup, &choices).unwrap();
 
         Self {
-            boolean_choices,
+            choices,
             commitment,
             proofs,
         }
@@ -40,121 +38,142 @@ impl<E: Pairing> Receiver<E> {
 
     pub fn receive(
         &self,
-        vec_we: &VectorWE<E>,
-        ct_pairs: Vec<CiphertextTuple<E>>,
-    ) -> Result<Vec<Vec<u8>>, VectorWEError> {
-        let mut decrypted_messages = Vec::new();
-        let mut total_decryption_time = std::time::Duration::new(0, 0);
+        encrypted_sets: Vec<Vec<Ciphertext<E>>>,
+    ) -> Result<Vec<Vec<u8>>, &'static str> {
+        let n_choices = encrypted_sets[0].len();
+        let mut chosen_cts = Vec::with_capacity(n_choices);
 
-        for (index, ct_pair) in ct_pairs.iter().enumerate() {
-            // Use the precomputed proof
-            let proof = self.proofs[index];
-
-            // chose ciphertext to decrypt based on boolean choice
-            let chosen_ct = if self.boolean_choices[index] == E::ScalarField::ZERO {
-                ct_pair.0.clone()
+        for i in 0..n_choices {
+            if self.choices[i] == E::ScalarField::ZERO {
+                chosen_cts.push(&encrypted_sets[0][i]);
             } else {
-                ct_pair.1.clone()
-            };
-
-            // decrypt message
-            let decryption_start = Instant::now();
-            let decrypted_message = vec_we.decrypt(proof, chosen_ct);
-            total_decryption_time += decryption_start.elapsed();
-            decrypted_messages.push(decrypted_message);
+                chosen_cts.push(&encrypted_sets[1][i]);
+            }
         }
 
-        // Remove the total_proof_gen_time print statement
-        println!("Total decryption time: {:?}", total_decryption_time);
+        let decrypted_messages = vec_decrypt::<E>(&self.proofs, &chosen_cts);
 
         Ok(decrypted_messages)
     }
 }
 
 pub struct Sender<E: Pairing> {
+    /// KZG Setup
+    kzg_setup: KZGSetup<E>,
+    /// Commitment
     commitment: E::G1,
 }
 
 impl<E: Pairing> Sender<E> {
-    pub fn new(commitment: E::G1) -> Self {
-        Self { commitment }
+    pub fn new(kzg_setup: KZGSetup<E>, commitment: E::G1) -> Self {
+        Self {
+            kzg_setup,
+            commitment,
+        }
     }
 
     pub fn send(
         &self,
-        vec_we: &VectorWE<E>,
-        circuit_keys: &[PlaintextTuple],
-    ) -> Result<Vec<CiphertextTuple<E>>, VectorWEError> {
-        let mut encrypted_messages = Vec::with_capacity(circuit_keys.len());
-        let encryption_start = Instant::now();
+        rng: &mut impl rand::Rng,
+        private_set: &[Vec<Vec<u8>>],
+    ) -> Result<Vec<Vec<Ciphertext<E>>>, &'static str> {
+        let n_values = private_set[0].len();
+        let elements =
+            Radix2EvaluationDomain::<<E as Pairing>::ScalarField>::new(n_values + PADDING_LEN)
+                .unwrap()
+                .elements()
+                .collect::<Vec<E::ScalarField>>();
 
-        for (index, value) in circuit_keys.iter().enumerate() {
-            encrypted_messages.push((
-                vec_we.encrypt(self.commitment, index, E::ScalarField::ZERO, &value.0),
-                vec_we.encrypt(self.commitment, index, E::ScalarField::ONE, &value.1),
-            ));
-        }
+        let mut encrypted_messages = Vec::with_capacity(private_set.len());
 
-        let encryption_time = encryption_start.elapsed();
-        println!("Encryption time: {:?}", encryption_time);
+        let data0: Vec<&[u8]> = private_set[0].iter().map(|v| v.as_slice()).collect();
+        let ct_0 = vec_encrypt::<E>(
+            rng,
+            &self.kzg_setup,
+            self.commitment,
+            &elements,
+            &vec![E::ScalarField::ZERO; n_values],
+            &data0,
+        );
+        encrypted_messages.push(ct_0);
+
+        let data1: Vec<&[u8]> = private_set[1].iter().map(|v| v.as_slice()).collect();
+        let ct_1 = vec_encrypt::<E>(
+            rng,
+            &self.kzg_setup,
+            self.commitment,
+            &elements,
+            &vec![E::ScalarField::ONE; n_values],
+            &data1,
+        );
+        encrypted_messages.push(ct_1);
 
         Ok(encrypted_messages)
     }
 }
 
 #[cfg(test)]
-mod new_laconic_ot_tests {
+mod laconic_ot_tests {
     use super::*;
     use ark_bls12_381::{Bls12_381, Fr};
     use ark_std::{rand::Rng, test_rng, UniformRand};
-    use keaki::{kzg::KZG, vec::VectorWE};
 
-    const MAX_DEGREE: usize = 32;
-    const NUM_OT_VALUES: usize = 32;
-    const VALUE_LENGTH: usize = 32;
+    const SETUP_DEGREE: usize = 16;
+    const N_CHOICES: usize = 8;
+    const CHOICE_CARDINALITY: usize = 2;
+    const VALUE_BYTES: usize = 32;
 
     #[test]
     fn test_laconic_ot() {
         // Setup KZG commitment scheme
         let rng = &mut test_rng();
         let secret = Fr::rand(rng);
-        let kzg = KZG::<Bls12_381>::setup(secret, MAX_DEGREE);
-        let vec_we: VectorWE<Bls12_381> = VectorWE::new(kzg);
+        let kzg = KZGSetup::<Bls12_381>::setup(secret, SETUP_DEGREE);
 
         // --------------------
         // ----- Receiver -----
         // --------------------
 
-        // Receiver's boolean choices
-        let boolean_choices: Vec<Fr> = (0..NUM_OT_VALUES)
-            .map(|_| if rng.gen_bool(0.5) { Fr::ONE } else { Fr::ZERO })
+        // In oblivious transfer, the receiver chooses a value from a set.
+        // In Laconic OT, the receiver chooses a value for each index.
+        let choices: Vec<Fr> = (0..N_CHOICES)
+            .map(|_| if rng.gen_bool(0.5) { Fr::ZERO } else { Fr::ONE })
             .collect();
 
-        let receiver_setup_start = Instant::now();
-        let receiver = Receiver::new(&vec_we, boolean_choices.clone());
-        let receiver_setup_time = receiver_setup_start.elapsed();
-        println!("Receiver setup time: {:?}\n", receiver_setup_time);
+        let com_start = Instant::now();
+
+        let receiver = Receiver::new(kzg.clone(), rng, choices.clone());
+
+        let com_time = com_start.elapsed();
+        println!("Commitment + proofs time: {:?}", com_time);
 
         // --------------------
         // ------ Sender ------
         // --------------------
 
-        // Set up pairs of circuit keys for receiver to choose from
-        let circuit_keys: Vec<PlaintextTuple> = (0..NUM_OT_VALUES)
-            .map(|_| {
-                (
-                    (0..VALUE_LENGTH).map(|_| rng.gen()).collect(),
-                    (0..VALUE_LENGTH).map(|_| rng.gen()).collect(),
-                )
-            })
-            .collect();
-        let sender = Sender::new(receiver.commitment);
+        // The sender holds a private set, for which the receiver should only get to know the selected values,
+        // and the sender should not know which values the receiver chose.
+        let mut private_set: Vec<Vec<Vec<u8>>> = Vec::new();
+        for _ in 0..CHOICE_CARDINALITY {
+            let mut choice_n = Vec::new();
 
-        // Encrypt the pairs of circuit keys using receiver's commitment
+            for _ in 0..N_CHOICES {
+                let choice: Vec<u8> = (0..VALUE_BYTES).map(|_| rng.gen()).collect();
+                choice_n.push(choice);
+            }
+
+            private_set.push(choice_n);
+        }
+
+        let sender = Sender::new(kzg.clone(), receiver.commitment.clone());
+
+        // Encrypt the set using the receiver's commitment
         let sender_send_start = Instant::now();
-        let encrypted_messages = sender.send(&vec_we, &circuit_keys).unwrap();
+
+        let encrypted_messages = sender.send(rng, &private_set).unwrap();
+
         let sender_send_time = sender_send_start.elapsed();
-        println!("Sender send time: {:?}\n", sender_send_time);
+        println!("Sender encrypt time: {:?}\n", sender_send_time);
 
         // --------------------
         // ----- Receiver -----
@@ -162,16 +181,18 @@ mod new_laconic_ot_tests {
 
         // Decrypt the pairs of ciphertexts using the receiver's boolean choice
         let receiver_receive_start = Instant::now();
-        let decrypted_messages = receiver.receive(&vec_we, encrypted_messages).unwrap();
+
+        let decrypted_messages = receiver.receive(encrypted_messages).unwrap();
+
         let receiver_receive_time = receiver_receive_start.elapsed();
-        println!("Receiver receive time: {:?}\n", receiver_receive_time);
+        println!("Receiver decrypt time: {:?}\n", receiver_receive_time);
 
         // Verify correctness of decrypted messages
         for (i, decrypted_message) in decrypted_messages.iter().enumerate() {
-            let expected_value = if boolean_choices[i] == Fr::ZERO {
-                &circuit_keys[i].0
+            let expected_value = if choices[i] == Fr::ZERO {
+                &private_set[0][i]
             } else {
-                &circuit_keys[i].1
+                &private_set[1][i]
             };
 
             assert_eq!(decrypted_message, expected_value, "Mismatch at index {}", i);
